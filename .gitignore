@@ -1,0 +1,80 @@
+# .gitignore for pyTransitPhotometry
+
+# FITS files
+*.fit
+*.fits
+*.FIT
+*.FITS
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Data directories (keep structure but not data)
+Group8.nosync/
+*_output/
+validation_output/
+pipeline_test_output/
+results/
+output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation builds
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+
+# Configuration files with sensitive data
+config_local.yaml
+*_local.yaml
+secrets.yaml

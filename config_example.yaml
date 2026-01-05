@@ -1,0 +1,136 @@
+# pyTransitPhotometry Configuration File
+# Edit this file to match your data and target
+
+# ============================================================================
+# DATA PATHS
+# ============================================================================
+paths:
+  data_dir: "./Group8.nosync/data"           # Science frames (WASP-75b)
+  bias_dir: "./Group8.nosync/bias"           # Bias frames
+  dark_dir: "./Group8.nosync/darks"          # Dark frames
+  flat_dir: "./Group8.nosync/flats"          # Flat field frames
+  output_dir: "./outputs"                     # Where to save results
+  
+  # File patterns (glob-style)
+  data_pattern: "*.fit"
+  bias_pattern: "*.fit"
+  dark_pattern: "*.fit"
+  flat_pattern: "*.fit"
+
+# ============================================================================
+# CCD CALIBRATION
+# ============================================================================
+calibration:
+  dark_exptime: 85.0              # Exposure time of dark frames (seconds)
+  flat_exptime: 1.0               # Exposure time of flat frames (seconds)
+  science_exptime: 85.0           # Exposure time of science frames (seconds)
+  combination_method: "median"    # "median" or "mean" for master frame creation
+  sigma_clip: null                # Optional: sigma threshold for outlier rejection (e.g., 3.0)
+
+# ============================================================================
+# STAR DETECTION
+# ============================================================================
+detection:
+  fwhm: 5.0                       # PSF FWHM in pixels
+  threshold: 10000.0              # Detection threshold
+  threshold_type: "absolute"      # "absolute" (counts) or "sigma" (SNR)
+  exclude_border: true            # Exclude stars near image edges
+  
+  # Quality filters
+  min_sharpness: 0.3              # Reject extended/blended sources
+  max_sharpness: 1.0              # Reject cosmic rays
+  max_roundness: 0.5              # Reject elongated sources
+
+# ============================================================================
+# APERTURE PHOTOMETRY
+# ============================================================================
+photometry:
+  aperture_radius: 6.0            # Photometry aperture radius (pixels)
+  annulus_inner: 40.0             # Background annulus inner radius
+  annulus_outer: 60.0             # Background annulus outer radius
+  
+  # Aperture optimization (optional)
+  optimize_aperture: false        # Auto-optimize aperture radius?
+  aperture_radii_test: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18]  # Radii to test
+  
+  # Target and reference star selection
+  target_star_index: 2            # Index of target star (0-indexed, sorted by brightness)
+  reference_star_indices: [0, 1]  # Indices of reference stars
+  reference_weighting: "inverse_variance"  # "inverse_variance" or "equal"
+
+# ============================================================================
+# DETRENDING
+# ============================================================================
+detrending:
+  sigma_threshold: 3.0            # Sigma clipping threshold (3σ standard)
+  max_iterations: 5               # Maximum clipping iterations
+  remove_linear_trend: true       # Remove linear time trend?
+  test_airmass: true              # Test for airmass correlation?
+
+# ============================================================================
+# TRANSIT MODEL
+# ============================================================================
+transit_model:
+  # Orbital parameters (typically fixed from literature)
+  period: 2.4842                  # Orbital period (days) - FIXED
+  t0_guess: 2460235.752           # Predicted transit center (MJD) - UPDATE THIS!
+  fix_t0: true                    # Fix t0 during fit? (true recommended unless full transit)
+  
+  # Limb darkening coefficients (from stellar atmosphere models)
+  limb_dark_u1: 0.40              # Quadratic LD coefficient u1 (V-band typical)
+  limb_dark_u2: 0.26              # Quadratic LD coefficient u2
+  
+  # Orbital configuration
+  eccentricity: 0.0               # Eccentricity (0 = circular)
+  omega: 90.0                     # Argument of periastron (degrees)
+  
+  # Initial guesses for fit parameters
+  rp_guess: 0.103                 # Radius ratio Rp/Rs
+  a_guess: 7.17                   # Scaled semi-major axis a/Rs
+  inc_guess: 82.0                 # Inclination (degrees)
+  
+  # Parameter bounds
+  rp_bounds: [0.085, 0.120]       # Hard bounds on Rp/Rs
+  a_bounds_factor: 0.2            # Fractional bounds on a/Rs (±20%)
+  inc_bounds_offset: 6.0          # Bounds on inclination (degrees, ±6°)
+  
+  # Stellar parameters (optional, for physical unit conversion)
+  r_star_solar: 1.51              # Stellar radius (solar radii)
+  m_star_solar: 1.24              # Stellar mass (solar masses)
+
+# ============================================================================
+# PIPELINE OPTIONS
+# ============================================================================
+options:
+  verbose: true                   # Print detailed progress?
+  save_intermediate: true         # Save intermediate data products?
+  plot_diagnostics: true          # Generate diagnostic plots?
+
+# ============================================================================
+# NOTES FOR USERS
+# ============================================================================
+# 
+# IMPORTANT: Before running, update these values:
+# 1. paths.data_dir, paths.bias_dir, paths.dark_dir, paths.flat_dir
+# 2. transit_model.t0_guess (use predicted transit time for your observation)
+# 3. photometry.target_star_index (after checking which star is your target)
+# 4. calibration exposure times (if different from defaults)
+#
+# TARGET SELECTION:
+# - Stars are sorted by brightness (index 0 = brightest)
+# - Run detection first, examine output, then set target_star_index
+# - Choose non-variable, bright stars for references
+#
+# LIMB DARKENING:
+# - Defaults (u1=0.40, u2=0.26) are typical for V-band, solar-type stars
+# - Get accurate values from:
+#   * ExoFAST limb darkening database
+#   * ATLAS/PHOENIX stellar atmosphere models
+#   * Literature for your specific target
+#
+# TROUBLESHOOTING:
+# - No sources detected? Lower detection.threshold
+# - Poor fit? Check t0_guess, ensure full transit coverage
+# - Large residuals? Test airmass correlation, check reference stars
+#
+# ============================================================================
