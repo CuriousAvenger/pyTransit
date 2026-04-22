@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "pytransitphotometry"
+version = "1.1.0"
+description = "Automated, config-driven pipeline for ground-based exoplanet transit photometry"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Sai Praneth", email = "" }
+]
+keywords = [
+    "astronomy",
+    "exoplanets",
+    "transit photometry",
+    "CCD reduction",
+    "PSF fitting",
+    "time-series analysis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "astropy>=5.0.0",
+    "photutils>=1.8.0",
+    "batman-package>=2.4.8",
+    "matplotlib>=3.5.0",
+    "pyyaml>=6.0",
+    "pandas>=1.3.0",
+    "scikit-learn>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=3.0",
+    "black>=22.0",
+    "flake8>=4.0",
+    "jupyter>=1.0",
+]
+
+[project.scripts]
+pytransit = "pyTransitPhotometry.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/CuriousAvenger/pyTransitPhotometry"
+Repository = "https://github.com/CuriousAvenger/pyTransitPhotometry"
+"Bug Tracker" = "https://github.com/CuriousAvenger/pyTransitPhotometry/issues"
+Changelog = "https://github.com/CuriousAvenger/pyTransitPhotometry/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/CuriousAvenger/pyTransitPhotometry/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyTransitPhotometry*"]
+
+[tool.setuptools.package-data]
+pyTransitPhotometry = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311"]
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]

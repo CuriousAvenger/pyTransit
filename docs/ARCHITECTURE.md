@@ -658,4 +658,4 @@ except RuntimeError as e:
 7. **Extensibility**: Strategy pattern enables swapping algorithms
 8. **No Surprises**: Explicit dependencies, no global state, immutable data
 
-**Next:** See [API_REFERENCE.md](API_REFERENCE.md) for detailed function documentation.
+**Next:** See [api.md](api.md) for detailed function documentation.

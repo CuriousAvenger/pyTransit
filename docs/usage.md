@@ -39,7 +39,7 @@ This installs the library and all required dependencies.
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/pytransitphotometry.git
+git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
 cd pytransitphotometry
 
 # Install in editable mode (for development)
@@ -70,11 +70,11 @@ pip install pytransitphotometry
 ```bash
 # Check command-line tool
 pytransit --version
-# Output: transitphotometry 1.0.0
+# Output: pytransitphotometry 1.1.0
 
 # Check Python import
 python -c "import pytransitphotometry; print(pytransitphotometry.__version__)"
-# Output: 1.0.0
+# Output: 1.1.0
 ```
 
 ### Dependencies Installed Automatically
@@ -412,7 +412,7 @@ Plots saved to `outputs/`:
 from pytransitphotometry import TransitPipeline, PipelineConfig
 
 # Load example config
-config = PipelineConfig.from_yaml('config_example.yaml')
+config = PipelineConfig.from_yaml('examples/config_example.yaml')
 
 # Run pipeline
 pipeline = TransitPipeline(config)
@@ -958,9 +958,9 @@ headers = headers[::2]
 
 ## Next Steps
 
-- **Understand the codebase:** Read [ARCHITECTURE.md](ARCHITECTURE.md)
-- **Explore API:** See [API_REFERENCE.md](API_REFERENCE.md)
-- **Extend the library:** Check [DEVELOPMENT.md](DEVELOPMENT.md)
+- **Understand the codebase:** Read [architecture.md](architecture.md)
+- **Explore API:** See [api.md](api.md)
+- **Extend the library:** Check [development.md](development.md)
 - **Report issues:** Open GitHub issue with config file and error message
 
 **Happy transiting! 🌟🪐**

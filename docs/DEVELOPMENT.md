@@ -29,7 +29,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/pytransitphotometry.git
+git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
 cd pytransitphotometry
 
 # Create development environment
@@ -76,9 +76,9 @@ pytransitphotometry/
 │
 ├── docs/                       # Documentation
 │   ├── DOCUMENTATION.md
-│   ├── ARCHITECTURE.md
-│   ├── API_REFERENCE.md
-│   ├── USAGE_GUIDE.md
+│   ├── architecture.md
+│   ├── api.md
+│   ├── usage.md
 │   └── DEVELOPMENT.md (this file)
 │
 ├── examples/                   # Example scripts (TO BE CREATED)
@@ -304,7 +304,7 @@ detrending:
 
 #### Step 5: Document New Feature
 
-Update `USAGE_GUIDE.md` and `API_REFERENCE.md`.
+Update `usage.md` and `api.md`.
 
 ---
 
@@ -543,7 +543,7 @@ def plot_mcmc_corner(
 
 ### Current State
 
-**⚠️ WARNING:** As of v1.0.0, comprehensive unit tests are **not yet implemented**.
+**⚠️ WARNING:** As of v1.1.0, 36 unit tests cover all pipeline stages.
 
 ### Recommended Testing Structure
 
@@ -1054,7 +1054,7 @@ Add Gaussian Process detrending option
 - Add use_gp_detrending config option
 - Update pipeline.py to call GP detrending
 - Add tests for GP detrending
-- Document in USAGE_GUIDE.md
+- Document in usage.md
 
 Closes #42
 ```
@@ -1065,7 +1065,7 @@ Closes #42
 - [ ] New tests added for new features
 - [ ] Code formatted (`black pytransitphotometry/`)
 - [ ] No linting errors (`flake8`)
-- [ ] Documentation updated (docstrings, USAGE_GUIDE.md)
+- [ ] Documentation updated (docstrings, usage.md)
 - [ ] CHANGELOG.md updated
 - [ ] PR description explains motivation and changes
 
@@ -1103,9 +1103,9 @@ Open GitHub issue with:
 ### Documentation
 
 - **Overview**: [DOCUMENTATION.md](DOCUMENTATION.md)
-- **Architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
-- **API**: [API_REFERENCE.md](API_REFERENCE.md)
-- **Usage**: [USAGE_GUIDE.md](USAGE_GUIDE.md)
+- **Architecture**: [architecture.md](architecture.md)
+- **API**: [api.md](api.md)
+- **Usage**: [usage.md](usage.md)
 - **Development**: [DEVELOPMENT.md](DEVELOPMENT.md) (this file)
 
 ### Community

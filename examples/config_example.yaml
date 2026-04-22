@@ -42,9 +42,13 @@ detection:
   max_roundness: 0.5              # Reject elongated sources
 
 # ============================================================================
-# APERTURE PHOTOMETRY
+# APERTURE / PSF PHOTOMETRY
 # ============================================================================
 photometry:
+  # Photometry engine: 'aperture' (classic) or 'psf' (PSF fitting)
+  method: "psf"                   # PSF fitting mitigates flux dilution from blends
+
+  # Circular aperture settings (used when method: 'aperture')
   aperture_radius: 6.0            # Photometry aperture radius (pixels)
   annulus_inner: 40.0             # Background annulus inner radius
   annulus_outer: 60.0             # Background annulus outer radius
@@ -52,6 +56,21 @@ photometry:
   # Aperture optimization (optional)
   optimize_aperture: false        # Auto-optimize aperture radius?
   aperture_radii_test: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18]  # Radii to test
+
+  # PSF photometry settings (used when method: 'psf')
+  psf_size: 25                    # Star cutout size for ePSF building (pixels, odd)
+  psf_oversampling: 4             # ePSF oversampling factor
+  psf_maxiters: 10                # ePSF builder iterations
+  psf_fit_shape: 11               # Fitting region per source (pixels, odd)
+  n_psf_stars: 20                 # Max bright stars used to build ePSF
+
+  # 2D background estimation
+  # 'annulus'      – classic circular annulus per star (fastest)
+  # 'background2d' – photutils mesh-based median sky map (recommended)
+  # 'polynomial'   – global 3rd-order Polynomial2D fit (severe gradients)
+  background_method: "background2d"
+  background_box_size: 64         # Mesh tile size for background2d (pixels)
+  background_filter_size: 3       # Median filter window for background mesh
   
   # Target and reference star selection
   target_star_index: 2            # Index of target star (0-indexed, sorted by brightness)
@@ -62,10 +81,23 @@ photometry:
 # DETRENDING
 # ============================================================================
 detrending:
-  sigma_threshold: 3.0            # Sigma clipping threshold (3σ standard)
-  max_iterations: 5               # Maximum clipping iterations
+  # Outlier rejection method:
+  # 'sigma_clip'        – iterative global sigma clipping (classic)
+  # 'rolling_mad'       – rolling-window MAD filter (recommended, protects ingress/egress)
+  # 'isolation_forest'  – Isolation Forest ML anomaly detector
+  outlier_method: "rolling_mad"
+  sigma_threshold: 3.0            # For sigma_clip: rejection threshold (σ)
+  max_iterations: 5               # For sigma_clip: maximum iterations
+  window_size: 20                 # For rolling_mad: rolling window size (points)
+  mad_sigma: 3.5                  # For rolling_mad: MAD rejection threshold
+  contamination: 0.05             # For isolation_forest: expected outlier fraction
+
+  # Airmass detrending
   remove_linear_trend: true       # Remove linear time trend?
-  test_airmass: true              # Test for airmass correlation?
+  test_airmass: true              # Test for airmass–flux correlation?
+  # Regression for airmass extinction: 'ols' (classic) or 'huber' (robust)
+  airmass_regression: "huber"
+  huber_epsilon: 1.35             # Huber ε (1.35 = 95% Gaussian efficiency)
 
 # ============================================================================
 # TRANSIT MODEL

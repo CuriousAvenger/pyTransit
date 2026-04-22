@@ -13,9 +13,16 @@ from .config import PipelineConfig
 from .io import load_fits_files, extract_header_value, get_ccd_gain, export_lightcurve, export_fit_results
 from .calibration import CalibrationFrames, create_master_frame
 from .detection import detect_sources, filter_sources, select_reference_stars
-from .photometry import PhotometryConfig as PhotConfig, measure_flux, optimize_aperture_radius
+from .photometry import (
+    PhotometryConfig as PhotConfig,
+    measure_flux,
+    optimize_aperture_radius,
+    estimate_2d_background,
+    build_epsf,
+    run_psf_photometry,
+)
 from .lightcurve import LightCurveBuilder
-from .detrending import detrend_lightcurve
+from .detrending import detrend_lightcurve, detrend_lightcurve_advanced
 from .models import TransitFitter
 
 
@@ -279,104 +286,182 @@ class TransitPipeline:
         """Stage 3: Extract differential photometry light curve."""
         if self.calibrated_images is None or self.sources_list is None:
             raise RuntimeError("Must run calibration and detection first")
-        
-        # Get CCD gain from first header
+
         ccd_gain = get_ccd_gain(self.headers[0])
-        
-        # Optionally optimize aperture radius
-        if self.config.photometry.optimize_aperture:
-            print("Optimizing aperture radius...")
-            radii_test = np.array(self.config.photometry.aperture_radii_test)
-            
+        phot_method = getattr(self.config.photometry, "method", "aperture")
+        bkg_method = getattr(self.config.photometry, "background_method", "annulus")
+
+        # ── 2D background estimation (used by both modes if not 'annulus') ────
+        background_maps = None
+        if bkg_method in ("background2d", "polynomial"):
+            print(f"Estimating 2D backgrounds ({bkg_method})...")
+            background_maps = []
+            for frame in self.calibrated_images:
+                bkg, _ = estimate_2d_background(
+                    frame,
+                    box_size=self.config.photometry.background_box_size,
+                    filter_size=self.config.photometry.background_filter_size,
+                    method=bkg_method,
+                )
+                background_maps.append(bkg)
+
+        # ── PSF photometry branch ─────────────────────────────────────────────
+        if phot_method == "psf":
+            print("Building empirical PSF from first frame...")
             first_frame = self.calibrated_images[0]
-            target_pos = (
-                self.sources_list[0]['xcentroid'][self.config.photometry.target_star_index],
-                self.sources_list[0]['ycentroid'][self.config.photometry.target_star_index]
+            first_bkg = background_maps[0] if background_maps else None
+            first_img_sub = (first_frame - first_bkg) if first_bkg is not None else first_frame
+
+            # Use brightest isolated stars for ePSF construction
+            n_psf_stars = getattr(self.config.photometry, "n_psf_stars", 20)
+            psf_positions = [
+                (float(self.sources_list[0]["xcentroid"][i]),
+                 float(self.sources_list[0]["ycentroid"][i]))
+                for i in range(min(n_psf_stars, len(self.sources_list[0])))
+            ]
+            epsf = build_epsf(
+                first_img_sub,
+                psf_positions,
+                size=self.config.photometry.psf_size,
+                oversampling=self.config.photometry.psf_oversampling,
+                maxiters=self.config.photometry.psf_maxiters,
             )
-            
-            optimal_r = optimize_aperture_radius(
-                first_frame, target_pos, radii_test,
+
+            # Indices of target + references
+            all_indices = (
+                [self.config.photometry.target_star_index]
+                + list(self.config.photometry.reference_star_indices)
+            )
+
+            def photometry_func(image, star_idx):
+                bkg_map = None
+                frame_idx = getattr(photometry_func, "_frame_idx", 0)
+                if background_maps is not None:
+                    bkg_map = background_maps[frame_idx]
+                pos = [
+                    (float(self.sources_list[0]["xcentroid"][star_idx]),
+                     float(self.sources_list[0]["ycentroid"][star_idx]))
+                ]
+                results = run_psf_photometry(
+                    image, pos, epsf,
+                    fwhm=self.config.detection.fwhm,
+                    fit_shape=self.config.photometry.psf_fit_shape,
+                    background_2d=bkg_map,
+                    ccd_gain=ccd_gain,
+                )
+                r = results[0]
+                return {
+                    "flux": r["flux"],
+                    "flux_err": r["flux_err"],
+                    "background_mean": 0.0,
+                    "background_std": 0.0,
+                    "snr": r["flux"] / (r["flux_err"] + 1e-10),
+                    "aperture_sum": r["flux"],
+                    "centroid": (r["x_fit"], r["y_fit"]),
+                }
+
+        # ── Aperture photometry branch ────────────────────────────────────────
+        else:
+            if self.config.photometry.optimize_aperture:
+                print("Optimizing aperture radius...")
+                radii_test = np.array(self.config.photometry.aperture_radii_test)
+                first_frame = self.calibrated_images[0]
+                target_pos = (
+                    self.sources_list[0]["xcentroid"][self.config.photometry.target_star_index],
+                    self.sources_list[0]["ycentroid"][self.config.photometry.target_star_index],
+                )
+                optimal_r = optimize_aperture_radius(
+                    first_frame, target_pos, radii_test,
+                    annulus_inner=self.config.photometry.annulus_inner,
+                    annulus_outer=self.config.photometry.annulus_outer,
+                    ccd_gain=ccd_gain,
+                )
+                self.config.photometry.aperture_radius = optimal_r
+
+            phot_config = PhotConfig(
+                aperture_radius=self.config.photometry.aperture_radius,
                 annulus_inner=self.config.photometry.annulus_inner,
                 annulus_outer=self.config.photometry.annulus_outer,
-                ccd_gain=ccd_gain
+                ccd_gain=ccd_gain,
             )
-            
-            self.config.photometry.aperture_radius = optimal_r
-            print(f"Updated aperture radius to {optimal_r:.1f} px")
-        
-        # Create photometry configuration
-        phot_config = PhotConfig(
-            aperture_radius=self.config.photometry.aperture_radius,
-            annulus_inner=self.config.photometry.annulus_inner,
-            annulus_outer=self.config.photometry.annulus_outer,
-            ccd_gain=ccd_gain
-        )
-        
-        print(f"Using {phot_config}")
-        
-        # Create photometry function for a given star index
-        def photometry_func(image, star_idx):
-            sources = self.sources_list[0]  # Use first frame sources for positions
-            position = (sources['xcentroid'][star_idx], sources['ycentroid'][star_idx])
-            return measure_flux(
-                image, position,
-                phot_config.aperture_radius,
-                phot_config.annulus_inner,
-                phot_config.annulus_outer,
-                phot_config.ccd_gain
-            )
-        
-        # Extract times from headers
-        times = extract_header_value(self.headers, 'JD-HELIO', default=0.0)
+            print(f"Using {phot_config}")
+
+            def photometry_func(image, star_idx):
+                sources = self.sources_list[0]
+                position = (sources["xcentroid"][star_idx], sources["ycentroid"][star_idx])
+                # Optionally subtract 2D background before aperture phot
+                frame_idx = getattr(photometry_func, "_frame_idx", 0)
+                img_work = image
+                if background_maps is not None:
+                    img_work = image - background_maps[frame_idx]
+                return measure_flux(
+                    img_work, position,
+                    phot_config.aperture_radius,
+                    phot_config.annulus_inner,
+                    phot_config.annulus_outer,
+                    phot_config.ccd_gain,
+                )
+
+        # ── Build differential light curve ────────────────────────────────────
+        times = extract_header_value(self.headers, "JD-HELIO", default=0.0)
         times = times - 2400000.5  # Convert to MJD
-        
+
         def time_extractor(frame_idx):
             return times[frame_idx]
-        
-        # Build light curve
-        print("\nBuilding differential photometry light curve...")
+
+        print(f"\nBuilding differential photometry light curve "
+              f"[method={phot_method}, background={bkg_method}]...")
         builder = LightCurveBuilder(
             target_index=self.config.photometry.target_star_index,
             reference_indices=self.config.photometry.reference_star_indices,
-            weighting=self.config.photometry.reference_weighting
+            weighting=self.config.photometry.reference_weighting,
         )
-        
+
         self.lightcurve = builder.build(
             self.calibrated_images,
             self.sources_list,
             photometry_func,
             time_extractor,
-            verbose=self.config.verbose
+            verbose=self.config.verbose,
         )
-        
+
         print(f"\n✓ Light curve extracted: {len(self.lightcurve['times'])} points")
     
     def run_detrending(self):
         """Stage 4: Detrend light curve and remove outliers."""
         if self.lightcurve is None:
             raise RuntimeError("Must run photometry first")
-        
+
         # Extract airmass if available
         airmass = None
         if self.config.detrending.test_airmass:
             try:
-                all_airmass = extract_header_value(self.headers, 'AIRMASS')
-                valid_mask = self.lightcurve['valid_frames']
+                all_airmass = extract_header_value(self.headers, "AIRMASS")
+                valid_mask = self.lightcurve["valid_frames"]
                 airmass = all_airmass[valid_mask]
-            except:
+            except Exception:
                 warnings.warn("Could not extract airmass from headers")
-        
-        # Run detrending
-        self.detrended_lc = detrend_lightcurve(
-            self.lightcurve['times'],
-            self.lightcurve['fluxes'],
-            self.lightcurve['errors'],
+
+        # Use advanced detrending pipeline
+        outlier_method = getattr(self.config.detrending, "outlier_method", "rolling_mad")
+        airmass_regression = getattr(self.config.detrending, "airmass_regression", "huber")
+
+        self.detrended_lc = detrend_lightcurve_advanced(
+            self.lightcurve["times"],
+            self.lightcurve["fluxes"],
+            self.lightcurve["errors"],
             airmass=airmass,
+            outlier_method=outlier_method,
             sigma_threshold=self.config.detrending.sigma_threshold,
+            window_size=getattr(self.config.detrending, "window_size", 20),
+            mad_sigma=getattr(self.config.detrending, "mad_sigma", 3.5),
+            contamination=getattr(self.config.detrending, "contamination", 0.05),
             remove_linear=self.config.detrending.remove_linear_trend,
-            test_airmass=self.config.detrending.test_airmass
+            test_airmass=self.config.detrending.test_airmass,
+            airmass_regression=airmass_regression,
+            huber_epsilon=getattr(self.config.detrending, "huber_epsilon", 1.35),
         )
-        
+
         print(f"\n✓ Detrending complete: {len(self.detrended_lc['times'])} points")
     
     def run_transit_fit(self):

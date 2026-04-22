@@ -55,14 +55,20 @@ def refine_centroid(
     if box_size % 2 == 0:
         box_size += 1
     
+    h, w = image.shape
     try:
         x_refined, y_refined = centroid_sources(
             image, [x_init], [y_init],
             box_size=box_size,
             centroid_func=centroid_func
         )
-        return float(x_refined[0]), float(y_refined[0])
-    
+        x_ref, y_ref = float(x_refined[0]), float(y_refined[0])
+        # Guard against NaN or out-of-bounds divergence (e.g. featureless backgrounds)
+        if (np.isnan(x_ref) or np.isnan(y_ref)
+                or not (0 <= x_ref < w) or not (0 <= y_ref < h)):
+            return x_init, y_init
+        return x_ref, y_ref
+
     except Exception as e:
         warnings.warn(f"Centroid refinement failed: {e}. Using initial position.")
         return x_init, y_init
@@ -265,8 +271,10 @@ def measure_flux(
     flux = aperture_sum - bkg_in_aperture
     
     # Compute flux error
+    # photutils >=3.0 requires bkg_error to be a 2D array matching image shape
     if error_map is None:
-        error_map = calc_total_error(image, bkg_std, effective_gain=ccd_gain)
+        bkg_error_map = np.full_like(image, bkg_std, dtype=float)
+        error_map = calc_total_error(image, bkg_error_map, effective_gain=ccd_gain)
     
     phot_with_err = aperture_photometry(image, aperture, error=error_map)
     flux_err = phot_with_err['aperture_sum_err'][0]
@@ -355,3 +363,296 @@ class PhotometryConfig:
             f"annulus={self.annulus_inner:.1f}-{self.annulus_outer:.1f}, "
             f"gain={self.ccd_gain:.2f})"
         )
+
+
+# ============================================================================
+# 2D BACKGROUND ESTIMATION
+# ============================================================================
+
+def estimate_2d_background(
+    image: np.ndarray,
+    box_size: int = 64,
+    filter_size: int = 3,
+    sigma_clip_val: float = 3.0,
+    method: str = "background2d",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Estimate a spatially varying 2D background to correct uneven illumination
+    and atmospheric intensity gradients across the detector.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2D science image.
+    box_size : int, optional
+        Tile size (pixels) for the mesh-based ``background2d`` method (default: 64).
+    filter_size : int, optional
+        Median filter window applied to the background mesh (default: 3).
+    sigma_clip_val : float, optional
+        Sigma threshold for masking stellar sources before background estimation
+        (default: 3.0).
+    method : str, optional
+        ``'background2d'`` — photutils mesh-based Background2D (default, recommended).
+        ``'polynomial'`` — global astropy Polynomial2D fit (degree 3); useful for
+        severe large-scale illumination gradients.
+
+    Returns
+    -------
+    background : np.ndarray
+        2D background map, same shape as *image*.
+    background_rms : np.ndarray
+        2D map of background RMS noise.
+
+    Notes
+    -----
+    The mesh-based ``background2d`` tiles the image into *box_size* × *box_size*
+    cells, estimates the sky in each cell with a sigma-clipped median, and
+    interpolates to produce a smooth map.  The polynomial method fits a
+    third-order 2D polynomial to sigma-clipped background pixels—best for
+    frames with severe atmospheric gradients that vary on scales larger than
+    the tile size.
+    """
+    if method == "background2d":
+        from photutils.background import Background2D, MedianBackground
+        from astropy.stats import SigmaClip
+
+        sigma_clip = SigmaClip(sigma=sigma_clip_val, maxiters=5)
+        bkg_estimator = MedianBackground()
+        bkg = Background2D(
+            image,
+            box_size=(box_size, box_size),
+            filter_size=(filter_size, filter_size),
+            sigma_clip=sigma_clip,
+            bkg_estimator=bkg_estimator,
+        )
+        return bkg.background.astype(np.float32), bkg.background_rms.astype(np.float32)
+
+    elif method == "polynomial":
+        from astropy.modeling.models import Polynomial2D
+        from astropy.modeling.fitting import LevMarLSQFitter
+        from astropy.stats import sigma_clip as astropy_sigma_clip
+
+        y_idx, x_idx = np.mgrid[: image.shape[0], : image.shape[1]]
+
+        # Sigma-clip stellar sources so they do not bias the polynomial fit
+        clipped = astropy_sigma_clip(image, sigma=sigma_clip_val, maxiters=5, masked=True)
+        valid = ~clipped.mask
+
+        # Downsample for efficiency
+        step = max(1, min(image.shape) // 64)
+        x_ds = x_idx[::step, ::step][valid[::step, ::step]].ravel()
+        y_ds = y_idx[::step, ::step][valid[::step, ::step]].ravel()
+        z_ds = image[::step, ::step][valid[::step, ::step]].ravel()
+
+        poly_init = Polynomial2D(degree=3)
+        fitter = LevMarLSQFitter()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            poly_fit = fitter(poly_init, x_ds, y_ds, z_ds)
+
+        background = poly_fit(x_idx, y_idx).astype(np.float32)
+        residuals = image - background
+        bkg_rms_val = float(np.std(residuals[valid]))
+        background_rms = np.full_like(background, bkg_rms_val)
+
+        print(f"✓ Polynomial 2D background: mean = {background.mean():.1f}, "
+              f"RMS = {bkg_rms_val:.2f}")
+        return background, background_rms
+
+    else:
+        raise ValueError(
+            f"Unknown background method '{method}'. "
+            "Choose 'background2d' or 'polynomial'."
+        )
+
+
+# ============================================================================
+# EMPIRICAL PSF CONSTRUCTION
+# ============================================================================
+
+def build_epsf(
+    image: np.ndarray,
+    positions: list,
+    size: int = 25,
+    oversampling: int = 4,
+    maxiters: int = 10,
+    sigma_clip_val: float = 3.0,
+) -> object:
+    """
+    Build an empirical PSF (ePSF) from isolated bright stars.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2D science image (background-subtracted recommended).
+    positions : list of (float, float)
+        (x, y) centroids of stars used to construct the ePSF.
+    size : int, optional
+        Side length (pixels) of each star cutout; forced to odd (default: 25).
+    oversampling : int, optional
+        Pixel oversampling factor for the ePSF grid (default: 4).
+    maxiters : int, optional
+        Maximum ePSF building iterations (default: 10).
+    sigma_clip_val : float, optional
+        Sigma clipping during ePSF construction (default: 3.0).
+
+    Returns
+    -------
+    epsf : photutils.psf.EPSFModel
+        Oversampled empirical PSF model ready for :func:`run_psf_photometry`.
+
+    Notes
+    -----
+    Implements the Anderson & King (2000) ePSF algorithm via photutils.
+    Pass 10–50 well-isolated, unsaturated stars for best results.
+    """
+    from photutils.psf import EPSFBuilder, extract_stars
+    from astropy.nddata import NDData
+    from astropy.table import Table
+    from astropy.stats import SigmaClip
+
+    if size % 2 == 0:
+        size += 1
+
+    nddata = NDData(data=image.astype(float))
+    stars_tbl = Table()
+    stars_tbl["x"] = [float(p[0]) for p in positions]
+    stars_tbl["y"] = [float(p[1]) for p in positions]
+    stars = extract_stars(nddata, stars_tbl, size=size)
+
+    if len(stars) == 0:
+        raise RuntimeError(
+            "No valid star cutouts extracted. "
+            "Verify that positions fall within the image bounds."
+        )
+
+    sigma_clip = SigmaClip(sigma=sigma_clip_val)
+    builder = EPSFBuilder(
+        oversampling=oversampling,
+        maxiters=maxiters,
+        progress_bar=False,
+        sigma_clip=sigma_clip,
+    )
+
+    epsf, fitted_stars = builder(stars)
+    print(
+        f"✓ Built ePSF from {len(fitted_stars)} stars "
+        f"({oversampling}× oversampling, {maxiters} iterations)"
+    )
+    return epsf
+
+
+# ============================================================================
+# PSF FITTING PHOTOMETRY
+# ============================================================================
+
+def run_psf_photometry(
+    image: np.ndarray,
+    positions: list,
+    epsf,
+    fwhm: float = 5.0,
+    fit_shape: int = 11,
+    background_2d: Optional[np.ndarray] = None,
+    ccd_gain: float = 1.0,
+) -> list:
+    """
+    Measure stellar fluxes via PSF fitting, accurately separating blended sources.
+
+    Unlike circular aperture photometry, PSF fitting decomposes the observed
+    image into individual stellar profiles, preventing flux dilution from
+    unresolved background stars within the photometric aperture.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2D science image.
+    positions : list of (float, float)
+        (x, y) centroids for each star to measure.
+    epsf : EPSFModel
+        Empirical PSF model from :func:`build_epsf`.
+    fwhm : float, optional
+        Approximate PSF FWHM in pixels (sets aperture_radius; default: 5.0).
+    fit_shape : int, optional
+        Side length (pixels) of the fitting region per source; forced to odd
+        (default: 11).
+    background_2d : np.ndarray, optional
+        2D background map to subtract before PSF fitting.
+    ccd_gain : float, optional
+        CCD gain in e⁻/ADU for Poisson error estimation (default: 1.0).
+
+    Returns
+    -------
+    results : list of dict
+        One dict per input position with keys:
+        ``'flux'``, ``'flux_err'``, ``'x_fit'``, ``'y_fit'``.
+
+    Notes
+    -----
+    Subtracts *background_2d* before PSF fitting to isolate stellar signal.
+    This mitigates the flux dilution that caused the χ²_red = 2.52 from the
+    simple circular aperture approach.
+    """
+    try:
+        from photutils.psf import PSFPhotometry  # photutils >= 1.8
+    except ImportError:
+        try:
+            from photutils.psf import BasicPSFPhotometry as PSFPhotometry  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "photutils >= 1.8 is required for PSF photometry. "
+                "Install with: pip install 'photutils>=1.8'"
+            )
+
+    from astropy.table import Table
+
+    if fit_shape % 2 == 0:
+        fit_shape += 1
+
+    image_work = (image - background_2d) if background_2d is not None else image.copy()
+    image_work = image_work.astype(float)
+
+    init_params = Table()
+    init_params["x"] = [float(p[0]) for p in positions]
+    init_params["y"] = [float(p[1]) for p in positions]
+
+    try:
+        psfphot = PSFPhotometry(
+            psf_model=epsf,
+            fit_shape=(fit_shape, fit_shape),
+            aperture_radius=max(3, int(fwhm * 1.5)),
+        )
+        phot_table = psfphot(image_work, init_params=init_params)
+    except Exception as exc:
+        raise RuntimeError(f"PSF photometry failed: {exc}") from exc
+
+    results = []
+    for i, pos in enumerate(positions):
+        if i < len(phot_table):
+            row = phot_table[i]
+            # Column names differ across photutils versions
+            for flux_col in ("flux_fit", "flux", "aperture_sum"):
+                if flux_col in phot_table.colnames:
+                    flux = float(row[flux_col])
+                    break
+            else:
+                flux = np.nan
+
+            flux_err = np.nan
+            for err_col in ("flux_err", "flux_unc"):
+                if err_col in phot_table.colnames:
+                    flux_err = float(row[err_col])
+                    break
+            if not np.isfinite(flux_err):
+                flux_err = float(np.sqrt(max(flux, 0) / ccd_gain + 1.0))
+
+            x_fit = float(row["x_fit"]) if "x_fit" in phot_table.colnames else pos[0]
+            y_fit = float(row["y_fit"]) if "y_fit" in phot_table.colnames else pos[1]
+
+            results.append({"flux": flux, "flux_err": flux_err,
+                            "x_fit": x_fit, "y_fit": y_fit})
+        else:
+            results.append({"flux": np.nan, "flux_err": np.nan,
+                            "x_fit": pos[0], "y_fit": pos[1]})
+
+    return results

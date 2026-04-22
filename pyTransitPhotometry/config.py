@@ -53,15 +53,31 @@ class DetectionConfig:
 
 @dataclass
 class PhotometryConfig:
-    """Aperture photometry parameters."""
+    """Aperture and PSF photometry parameters."""
+    # Photometry method
+    method: str = "aperture"          # 'aperture' or 'psf'
+
+    # Aperture photometry
     aperture_radius: float = 6.0  # pixels
     annulus_inner: float = 40.0   # pixels
     annulus_outer: float = 60.0   # pixels
-    
+
     # Auto-optimization
     optimize_aperture: bool = False
     aperture_radii_test: list = field(default_factory=lambda: list(range(3, 20)))
-    
+
+    # PSF photometry
+    psf_size: int = 25             # star cutout side length for ePSF building
+    psf_oversampling: int = 4      # ePSF oversampling factor
+    psf_maxiters: int = 10         # ePSF builder iterations
+    psf_fit_shape: int = 11        # fitting region per source (pixels)
+    n_psf_stars: int = 20          # max stars used for ePSF construction
+
+    # 2D background estimation
+    background_method: str = "background2d"  # 'annulus', 'background2d', 'polynomial'
+    background_box_size: int = 64            # mesh tile size for background2d
+    background_filter_size: int = 3          # median filter for background mesh
+
     # Target and reference selection
     target_star_index: int = 2  # index in detected sources (sorted by brightness)
     reference_star_indices: list = field(default_factory=lambda: [0, 1])
@@ -71,10 +87,19 @@ class PhotometryConfig:
 @dataclass
 class DetrendingConfig:
     """Detrending and outlier removal parameters."""
-    sigma_threshold: float = 3.0
-    max_iterations: int = 5
+    # Outlier rejection
+    outlier_method: str = "rolling_mad"   # 'sigma_clip', 'rolling_mad', 'isolation_forest'
+    sigma_threshold: float = 3.0          # threshold for sigma_clip
+    max_iterations: int = 5               # max iterations for sigma_clip
+    window_size: int = 20                 # rolling window for rolling_mad
+    mad_sigma: float = 3.5                # MAD rejection threshold
+    contamination: float = 0.05           # expected outlier fraction for isolation_forest
+
+    # Airmass detrending
     remove_linear_trend: bool = True
     test_airmass: bool = True
+    airmass_regression: str = "huber"     # 'ols' or 'huber'
+    huber_epsilon: float = 1.35           # Huber ε parameter
 
 
 @dataclass

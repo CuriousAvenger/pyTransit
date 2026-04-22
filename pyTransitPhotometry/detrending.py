@@ -3,7 +3,10 @@ Detrending and outlier removal for light curves.
 
 Implements:
 - Sigma clipping for outlier rejection
+- Rolling-window MAD filter for tracking drift rejection
+- Isolation Forest anomaly detection
 - Airmass correlation analysis
+- Robust Huber regression for airmass detrending
 - Linear trend removal
 - Systematic effects diagnostics
 """
@@ -373,4 +376,362 @@ def detrend_lightcurve(
     print(f"  RMS before: {np.std(fluxes_clean):.6f}")
     print(f"  RMS after: {np.std(fluxes_detrended):.6f}")
     
+    return result
+
+
+# ============================================================================
+# ROLLING-WINDOW MAD FILTER
+# ============================================================================
+
+def rolling_mad_filter(
+    times: np.ndarray,
+    fluxes: np.ndarray,
+    errors: np.ndarray,
+    window_size: int = 20,
+    sigma_mad: float = 3.5,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reject outliers using a rolling-window Median Absolute Deviation filter.
+
+    Unlike global sigma clipping, each point is compared only to its local
+    neighbourhood, preventing genuine transit ingress/egress from being
+    misidentified as outliers.
+
+    Parameters
+    ----------
+    times : np.ndarray
+        Observation times.
+    fluxes : np.ndarray
+        Flux measurements.
+    errors : np.ndarray
+        Flux uncertainties.
+    window_size : int, optional
+        Number of consecutive points in each rolling window (default: 20).
+        Should be small enough to track local scatter but large enough to
+        average over noise (10–30 is typical).
+    sigma_mad : float, optional
+        Rejection threshold in units of MAD-derived σ (default: 3.5).
+        3.5 is recommended: conservative enough to protect ingress/egress
+        while still catching sharp tracking-drift spikes.
+
+    Returns
+    -------
+    times_clean, fluxes_clean, errors_clean : np.ndarray
+        Filtered arrays.
+    mask : np.ndarray of bool
+        True where the point was *kept*.
+
+    Notes
+    -----
+    MAD-derived σ:  σ_MAD = 1.4826 × MAD (consistent with Gaussian σ).
+    """
+    n = len(fluxes)
+    half = window_size // 2
+    mask = np.ones(n, dtype=bool)
+
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        window = fluxes[lo:hi]
+        med = np.median(window)
+        mad = np.median(np.abs(window - med))
+        sigma_equiv = 1.4826 * mad
+        if sigma_equiv > 0 and np.abs(fluxes[i] - med) > sigma_mad * sigma_equiv:
+            mask[i] = False
+
+    n_rejected = np.sum(~mask)
+    print(
+        f"✓ Rolling MAD filter (window={window_size}, {sigma_mad}σ): "
+        f"removed {n_rejected}/{n} outliers ({n_rejected / n * 100:.1f}%)"
+    )
+    return times[mask], fluxes[mask], errors[mask], mask
+
+
+# ============================================================================
+# ISOLATION FOREST ANOMALY DETECTION
+# ============================================================================
+
+def isolation_forest_filter(
+    times: np.ndarray,
+    fluxes: np.ndarray,
+    errors: np.ndarray,
+    contamination: float = 0.05,
+    n_estimators: int = 200,
+    random_state: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reject anomalies (tracking drifts, scintillation spikes) via Isolation Forest.
+
+    The algorithm isolates anomalies by randomly partitioning the feature space;
+    anomalous points require fewer splits than normal inliers.
+
+    Parameters
+    ----------
+    times : np.ndarray
+        Observation times.
+    fluxes : np.ndarray
+        Flux measurements.
+    errors : np.ndarray
+        Flux uncertainties.
+    contamination : float, optional
+        Expected fraction of outliers in [0, 0.5] (default: 0.05).
+        Set higher (~0.10) for data with severe tracking problems.
+    n_estimators : int, optional
+        Number of isolation trees (default: 200).
+    random_state : int, optional
+        Random seed for reproducibility (default: 42).
+
+    Returns
+    -------
+    times_clean, fluxes_clean, errors_clean : np.ndarray
+        Filtered arrays.
+    mask : np.ndarray of bool
+        True where the point was classified as an inlier.
+
+    Notes
+    -----
+    Features used: normalised (time, flux, local flux gradient).
+    The gradient distinguishes sharp tracking spikes (large gradient) from
+    smooth transit ingress/egress, protecting genuine astrophysical signal.
+    Requires ``scikit-learn``.
+    """
+    try:
+        from sklearn.ensemble import IsolationForest
+    except ImportError:
+        raise ImportError(
+            "scikit-learn is required for Isolation Forest filtering. "
+            "Install with: pip install scikit-learn"
+        )
+
+    eps = 1e-10
+    t_norm = (times - times.mean()) / (times.std() + eps)
+    f_norm = (fluxes - fluxes.mean()) / (fluxes.std() + eps)
+    grad = np.gradient(fluxes, times)
+    g_norm = (grad - grad.mean()) / (grad.std() + eps)
+
+    features = np.column_stack([t_norm, f_norm, g_norm])
+
+    clf = IsolationForest(
+        n_estimators=n_estimators,
+        contamination=contamination,
+        random_state=random_state,
+        n_jobs=-1,
+    )
+    predictions = clf.fit_predict(features)
+    mask = predictions == 1  # 1 = inlier, -1 = outlier
+
+    n_rejected = np.sum(~mask)
+    n_total = len(fluxes)
+    print(
+        f"✓ Isolation Forest: rejected {n_rejected}/{n_total} anomalies "
+        f"({n_rejected / n_total * 100:.1f}%, contamination={contamination})"
+    )
+    return times[mask], fluxes[mask], errors[mask], mask
+
+
+# ============================================================================
+# HUBER REGRESSION AIRMASS DETRENDING
+# ============================================================================
+
+def huber_airmass_detrend(
+    times: np.ndarray,
+    fluxes: np.ndarray,
+    errors: np.ndarray,
+    airmass: np.ndarray,
+    epsilon: float = 1.35,
+) -> Tuple[np.ndarray, float, float]:
+    """
+    Remove airmass-correlated atmospheric extinction via robust Huber regression.
+
+    Ordinary least squares (OLS) is sensitive to outliers that inflate the
+    fitted extinction slope, biasing the out-of-transit baseline and
+    underestimating transit depth (producing high χ²_red).  Huber regression
+    minimises a combined L1/L2 loss, making it robust to such outliers.
+
+    Parameters
+    ----------
+    times : np.ndarray
+        Observation times (unused in fit; retained for API consistency).
+    fluxes : np.ndarray
+        Flux measurements.
+    errors : np.ndarray
+        Flux uncertainties (used as inverse-variance weights).
+    airmass : np.ndarray
+        Airmass values at each observation epoch.
+    epsilon : float, optional
+        Huber transition parameter (default: 1.35 ≈ 95% Gaussian efficiency).
+        Smaller values increase robustness at the cost of efficiency.
+
+    Returns
+    -------
+    fluxes_detrended : np.ndarray
+        Airmass-corrected fluxes, normalised so that the out-of-transit
+        baseline is preserved.
+    slope : float
+        Fitted extinction slope (Δflux / Δairmass).
+    intercept : float
+        Fitted intercept.
+
+    Notes
+    -----
+    Detrending: ``F_corr = F_obs / (trend / mean(trend))``
+    so the mean flux level is preserved.  Requires ``scikit-learn``.
+    """
+    try:
+        from sklearn.linear_model import HuberRegressor
+    except ImportError:
+        raise ImportError(
+            "scikit-learn is required for Huber regression. "
+            "Install with: pip install scikit-learn"
+        )
+
+    airmass_c = airmass - airmass.mean()
+    X = airmass_c.reshape(-1, 1)
+    weights = 1.0 / (errors ** 2 + 1e-20)
+
+    try:
+        huber = HuberRegressor(epsilon=epsilon, max_iter=300)
+        huber.fit(X, fluxes, sample_weight=weights)
+        slope = float(huber.coef_[0])
+        intercept = float(huber.intercept_)
+    except Exception as exc:
+        warnings.warn(f"Huber fit failed ({exc}); falling back to weighted OLS.")
+        w_norm = weights / weights.sum()
+        coeffs = np.polyfit(airmass_c, fluxes, 1, w=np.sqrt(w_norm))
+        slope, intercept = float(coeffs[0]), float(coeffs[1])
+
+    trend = slope * airmass_c + intercept
+    trend_norm = trend / np.mean(trend)
+    fluxes_detrended = fluxes / trend_norm
+
+    print(
+        f"✓ Huber airmass detrending: slope={slope:.6f}, "
+        f"intercept={intercept:.6f} (ε={epsilon})"
+    )
+    return fluxes_detrended, slope, intercept
+
+
+# ============================================================================
+# ENHANCED FULL DETRENDING PIPELINE
+# ============================================================================
+
+def detrend_lightcurve_advanced(
+    times: np.ndarray,
+    fluxes: np.ndarray,
+    errors: np.ndarray,
+    airmass: Optional[np.ndarray] = None,
+    outlier_method: str = "rolling_mad",
+    sigma_threshold: float = 3.0,
+    window_size: int = 20,
+    mad_sigma: float = 3.5,
+    contamination: float = 0.05,
+    remove_linear: bool = True,
+    test_airmass: bool = True,
+    airmass_regression: str = "huber",
+    huber_epsilon: float = 1.35,
+) -> dict:
+    """
+    Full detrending pipeline with advanced anomaly rejection and robust regression.
+
+    Parameters
+    ----------
+    times, fluxes, errors : np.ndarray
+        Light curve arrays.
+    airmass : np.ndarray, optional
+        Airmass values for extinction detrending.
+    outlier_method : str, optional
+        ``'sigma_clip'``, ``'rolling_mad'`` (default), or ``'isolation_forest'``.
+    sigma_threshold : float, optional
+        Sigma threshold for ``'sigma_clip'`` (default: 3.0).
+    window_size : int, optional
+        Rolling window size for ``'rolling_mad'`` (default: 20).
+    mad_sigma : float, optional
+        MAD rejection threshold (default: 3.5).
+    contamination : float, optional
+        Expected outlier fraction for ``'isolation_forest'`` (default: 0.05).
+    remove_linear : bool, optional
+        Remove linear time trend (default: True).
+    test_airmass : bool, optional
+        Test for airmass–flux correlation (default: True).
+    airmass_regression : str, optional
+        ``'ols'`` or ``'huber'`` (default) for airmass detrending.
+    huber_epsilon : float, optional
+        Huber ε parameter (default: 1.35).
+
+    Returns
+    -------
+    result : dict
+        Keys: ``'times'``, ``'fluxes'``, ``'errors'``, ``'mask'``,
+        ``'linear_slope'``, ``'airmass_test'``, ``'huber_slope'``,
+        ``'huber_intercept'``.
+    """
+    result = {}
+
+    # ── Step 1: Anomaly / outlier rejection ──────────────────────────────────
+    if outlier_method == "sigma_clip":
+        times_clean, fluxes_clean, errors_clean, mask = sigma_clip(
+            times, fluxes, errors, sigma_threshold=sigma_threshold
+        )
+    elif outlier_method == "rolling_mad":
+        times_clean, fluxes_clean, errors_clean, mask = rolling_mad_filter(
+            times, fluxes, errors,
+            window_size=window_size,
+            sigma_mad=mad_sigma,
+        )
+    elif outlier_method == "isolation_forest":
+        times_clean, fluxes_clean, errors_clean, mask = isolation_forest_filter(
+            times, fluxes, errors,
+            contamination=contamination,
+        )
+    else:
+        raise ValueError(
+            f"Unknown outlier_method '{outlier_method}'. "
+            "Choose 'sigma_clip', 'rolling_mad', or 'isolation_forest'."
+        )
+
+    result["mask"] = mask
+
+    # ── Step 2: Airmass correlation test and robust detrending ───────────────
+    if test_airmass and airmass is not None:
+        airmass_clean = airmass[mask]
+        airmass_result = test_airmass_correlation(airmass_clean, fluxes_clean)
+        result["airmass_test"] = airmass_result
+
+        if airmass_result["needs_correction"]:
+            if airmass_regression == "huber":
+                fluxes_clean, huber_slope, huber_intercept = huber_airmass_detrend(
+                    times_clean, fluxes_clean, errors_clean, airmass_clean,
+                    epsilon=huber_epsilon,
+                )
+                result["huber_slope"] = huber_slope
+                result["huber_intercept"] = huber_intercept
+            else:
+                # OLS via existing remove_linear_trend on airmass
+                coeffs = np.polyfit(airmass_clean - airmass_clean.mean(), fluxes_clean, 1)
+                trend = np.polyval(coeffs, airmass_clean - airmass_clean.mean())
+                fluxes_clean = fluxes_clean / (trend / np.mean(trend))
+                result["huber_slope"] = float(coeffs[0])
+                result["huber_intercept"] = float(coeffs[1])
+
+    # ── Step 3: Linear time detrending ───────────────────────────────────────
+    if remove_linear:
+        fluxes_detrended, slope, intercept = remove_linear_trend(
+            times_clean, fluxes_clean, errors_clean
+        )
+        result["linear_slope"] = slope
+        result["linear_intercept"] = intercept
+    else:
+        fluxes_detrended = fluxes_clean
+        result["linear_slope"] = 0.0
+        result["linear_intercept"] = float(np.mean(fluxes_clean))
+
+    result["times"] = times_clean
+    result["fluxes"] = fluxes_detrended
+    result["errors"] = errors_clean
+
+    print(f"\n✓ Advanced detrending complete")
+    print(f"  Initial: {len(times)} pts  →  After rejection: {len(times_clean)} pts")
+    print(f"  RMS before: {np.std(fluxes_clean):.6f}  →  "
+          f"after: {np.std(fluxes_detrended):.6f}")
+
     return result

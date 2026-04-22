@@ -1416,4 +1416,4 @@ model = batman_transit_model(times, t0, period, rp, a, inc)
 
 ---
 
-**Next:** See [USAGE_GUIDE.md](USAGE_GUIDE.md) for practical examples and [DEVELOPMENT.md](DEVELOPMENT.md) for extending the library.
+**Next:** See [usage.md](usage.md) for practical examples and [DEVELOPMENT.md](DEVELOPMENT.md) for extending the library.
