@@ -20,11 +20,11 @@ def refine_centroid(
     image: np.ndarray,
     initial_position: Tuple[float, float],
     box_size: int = 51,
-    centroid_func=centroid_2dg
+    centroid_func=centroid_2dg,
 ) -> Tuple[float, float]:
     """
     Refine star centroid using 2D Gaussian fitting.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -36,36 +36,33 @@ def refine_centroid(
         Should be odd number
     centroid_func : callable, optional
         Centroid function (default: centroid_2dg for 2D Gaussian)
-    
+
     Returns
     -------
     x_centroid : float
         Refined x position
     y_centroid : float
         Refined y position
-    
+
     Notes
     -----
     Uses iterative 2D Gaussian fitting to achieve sub-pixel accuracy.
     Typical precision: 0.01-0.1 pixels for bright, isolated stars.
     """
     x_init, y_init = initial_position
-    
+
     # Ensure box_size is odd
     if box_size % 2 == 0:
         box_size += 1
-    
+
     h, w = image.shape
     try:
         x_refined, y_refined = centroid_sources(
-            image, [x_init], [y_init],
-            box_size=box_size,
-            centroid_func=centroid_func
+            image, [x_init], [y_init], box_size=box_size, centroid_func=centroid_func
         )
         x_ref, y_ref = float(x_refined[0]), float(y_refined[0])
         # Guard against NaN or out-of-bounds divergence (e.g. featureless backgrounds)
-        if (np.isnan(x_ref) or np.isnan(y_ref)
-                or not (0 <= x_ref < w) or not (0 <= y_ref < h)):
+        if np.isnan(x_ref) or np.isnan(y_ref) or not (0 <= x_ref < w) or not (0 <= y_ref < h):
             return x_init, y_init
         return x_ref, y_ref
 
@@ -81,11 +78,11 @@ def optimize_aperture_radius(
     annulus_inner: float,
     annulus_outer: float,
     ccd_gain: float = 1.0,
-    return_snr_curve: bool = False
+    return_snr_curve: bool = False,
 ) -> float:
     """
     Find optimal aperture radius that maximizes SNR.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -102,25 +99,25 @@ def optimize_aperture_radius(
         CCD gain in e-/ADU (default: 1.0)
     return_snr_curve : bool, optional
         If True, also return (radii, snr_values)
-    
+
     Returns
     -------
     optimal_radius : float
         Radius that maximizes SNR
     (radii, snr_values) : tuple, optional
         SNR curve if return_snr_curve=True
-    
+
     Notes
     -----
     SNR calculation:
         Signal = aperture_flux - background_per_pixel * n_pixels
         Noise² = Signal*gain + n_pixels*σ_background²
         SNR = Signal / Noise
-    
+
     Optimal radius typically 1-2× FWHM, balancing:
     - Larger aperture: collects more photons
     - Smaller aperture: less sky noise
-    
+
     Examples
     --------
     >>> radii_test = np.arange(3, 20, 1)
@@ -131,49 +128,48 @@ def optimize_aperture_radius(
     ... )
     """
     bkg_annulus = CircularAnnulus(position, r_in=annulus_inner, r_out=annulus_outer)
-    
+
     # Compute background statistics
-    annulus_masks = bkg_annulus.to_mask(method='center')
+    annulus_masks = bkg_annulus.to_mask(method="center")
     annulus_mask = annulus_masks[0] if isinstance(annulus_masks, list) else annulus_masks
     annulus_data = annulus_mask.multiply(image)
     annulus_data_1d = annulus_data[annulus_mask.data > 0]
-    
+
     if len(annulus_data_1d) == 0:
         raise ValueError("Background annulus contains no valid pixels")
-    
-    bkg_mean = np.mean(annulus_data_1d)
+
     bkg_std = np.std(annulus_data_1d)
-    
+
     snr_list = []
-    
+
     for r in radii:
         aperture = CircularAperture(position, r=r)
         phot_table = aperture_photometry(image, [aperture, bkg_annulus])
-        
+
         # Background-subtracted signal
-        aperture_sum = phot_table['aperture_sum_0'][0]
-        bkg_sum = phot_table['aperture_sum_1'][0]
+        aperture_sum = phot_table["aperture_sum_0"][0]
+        bkg_sum = phot_table["aperture_sum_1"][0]
         bkg_per_pixel = bkg_sum / bkg_annulus.area
         bkg_in_aperture = bkg_per_pixel * aperture.area
         signal = aperture_sum - bkg_in_aperture
-        
+
         # Noise calculation (CCD equation)
         # Noise² = Poisson(signal+sky) + Npix × σ_sky²
         noise_squared = (
-            np.abs(aperture_sum) * ccd_gain +  # Poisson from star + sky
-            aperture.area * bkg_std**2  # Background uncertainty
+            np.abs(aperture_sum) * ccd_gain  # Poisson from star + sky
+            + aperture.area * bkg_std**2  # Background uncertainty
         )
         noise = np.sqrt(noise_squared)
-        
+
         snr = signal / noise if noise > 0 else 0
         snr_list.append(snr)
-    
+
     snr_array = np.array(snr_list)
     best_idx = np.argmax(snr_array)
     optimal_radius = radii[best_idx]
-    
+
     print(f"✓ Optimal aperture radius: {optimal_radius:.1f} px (SNR = {snr_array[best_idx]:.1f})")
-    
+
     if return_snr_curve:
         return optimal_radius, (radii, snr_array)
     else:
@@ -187,11 +183,11 @@ def measure_flux(
     annulus_inner: float,
     annulus_outer: float,
     ccd_gain: float = 1.0,
-    error_map: Optional[np.ndarray] = None
+    error_map: Optional[np.ndarray] = None,
 ) -> dict:
     """
     Measure background-subtracted flux with uncertainties.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -208,7 +204,7 @@ def measure_flux(
         CCD gain in e-/ADU (default: 1.0)
     error_map : np.ndarray, optional
         Pre-computed error map from calc_total_error()
-    
+
     Returns
     -------
     result : dict
@@ -220,7 +216,7 @@ def measure_flux(
         - snr: signal-to-noise ratio
         - aperture_sum: raw aperture sum
         - centroid: refined (x, y) position
-    
+
     Notes
     -----
     This is the core photometry function. It:
@@ -229,7 +225,7 @@ def measure_flux(
     3. Estimates local background from annulus
     4. Subtracts background
     5. Computes uncertainties using CCD noise model
-    
+
     Examples
     --------
     >>> result = measure_flux(
@@ -242,66 +238,63 @@ def measure_flux(
     # Refine centroid
     x_center, y_center = refine_centroid(image, position)
     refined_position = (x_center, y_center)
-    
+
     # Define apertures
     aperture = CircularAperture(refined_position, r=aperture_radius)
     annulus = CircularAnnulus(refined_position, r_in=annulus_inner, r_out=annulus_outer)
-    
+
     # Get background statistics
-    annulus_masks = annulus.to_mask(method='center')
+    annulus_masks = annulus.to_mask(method="center")
     annulus_mask = annulus_masks[0] if isinstance(annulus_masks, list) else annulus_masks
     annulus_data = annulus_mask.multiply(image)
     annulus_data_1d = annulus_data[annulus_mask.data > 0]
-    
+
     if len(annulus_data_1d) == 0:
         raise ValueError(f"Background annulus empty at position {position}")
-    
+
     bkg_mean = np.mean(annulus_data_1d)
     bkg_std = np.std(annulus_data_1d)
-    
+
     # Perform aperture photometry
     phot_table = aperture_photometry(image, [aperture, annulus])
-    
-    aperture_sum = phot_table['aperture_sum_0'][0]
-    bkg_sum = phot_table['aperture_sum_1'][0]
-    
+
+    aperture_sum = phot_table["aperture_sum_0"][0]
+    bkg_sum = phot_table["aperture_sum_1"][0]
+
     # Background-subtracted flux
     bkg_per_pixel = bkg_sum / annulus.area
     bkg_in_aperture = bkg_per_pixel * aperture.area
     flux = aperture_sum - bkg_in_aperture
-    
+
     # Compute flux error
     # photutils >=3.0 requires bkg_error to be a 2D array matching image shape
     if error_map is None:
         bkg_error_map = np.full_like(image, bkg_std, dtype=float)
         error_map = calc_total_error(image, bkg_error_map, effective_gain=ccd_gain)
-    
+
     phot_with_err = aperture_photometry(image, aperture, error=error_map)
-    flux_err = phot_with_err['aperture_sum_err'][0]
-    
+    flux_err = phot_with_err["aperture_sum_err"][0]
+
     # Compute SNR
-    noise_squared = (
-        np.abs(aperture_sum) * ccd_gain +
-        aperture.area * bkg_std**2
-    )
+    noise_squared = np.abs(aperture_sum) * ccd_gain + aperture.area * bkg_std**2
     noise = np.sqrt(noise_squared)
     snr = flux / noise if noise > 0 else 0
-    
+
     return {
-        'flux': float(flux),
-        'flux_err': float(flux_err),
-        'background_mean': float(bkg_mean),
-        'background_std': float(bkg_std),
-        'snr': float(snr),
-        'aperture_sum': float(aperture_sum),
-        'centroid': refined_position
+        "flux": float(flux),
+        "flux_err": float(flux_err),
+        "background_mean": float(bkg_mean),
+        "background_std": float(bkg_std),
+        "snr": float(snr),
+        "aperture_sum": float(aperture_sum),
+        "centroid": refined_position,
     }
 
 
 class PhotometryConfig:
     """
     Configuration container for aperture photometry.
-    
+
     Parameters
     ----------
     aperture_radius : float
@@ -314,7 +307,7 @@ class PhotometryConfig:
         CCD gain in e-/ADU (default: 1.0)
     centroid_box_size : int, optional
         Box size for centroid refinement (default: 51)
-    
+
     Examples
     --------
     >>> config = PhotometryConfig(
@@ -324,14 +317,14 @@ class PhotometryConfig:
     ...     ccd_gain=1.5
     ... )
     """
-    
+
     def __init__(
         self,
         aperture_radius: float,
         annulus_inner: float,
         annulus_outer: float,
         ccd_gain: float = 1.0,
-        centroid_box_size: int = 51
+        centroid_box_size: int = 51,
     ):
         # Validation
         if aperture_radius <= 0:
@@ -342,21 +335,24 @@ class PhotometryConfig:
             raise ValueError("annulus_outer must be > annulus_inner")
         if ccd_gain <= 0:
             raise ValueError("ccd_gain must be positive")
-        
+
         self.aperture_radius = aperture_radius
         self.annulus_inner = annulus_inner
         self.annulus_outer = annulus_outer
         self.ccd_gain = ccd_gain
         self.centroid_box_size = centroid_box_size
-    
+
     def measure_flux(self, image: np.ndarray, position: Tuple[float, float]) -> dict:
         """Convenience method to measure flux with this configuration."""
         return measure_flux(
-            image, position,
-            self.aperture_radius, self.annulus_inner, self.annulus_outer,
-            self.ccd_gain
+            image,
+            position,
+            self.aperture_radius,
+            self.annulus_inner,
+            self.annulus_outer,
+            self.ccd_gain,
         )
-    
+
     def __repr__(self):
         return (
             f"PhotometryConfig(aperture_r={self.aperture_radius:.1f}, "
@@ -368,6 +364,7 @@ class PhotometryConfig:
 # ============================================================================
 # 2D BACKGROUND ESTIMATION
 # ============================================================================
+
 
 def estimate_2d_background(
     image: np.ndarray,
@@ -456,20 +453,22 @@ def estimate_2d_background(
         bkg_rms_val = float(np.std(residuals[valid]))
         background_rms = np.full_like(background, bkg_rms_val)
 
-        print(f"✓ Polynomial 2D background: mean = {background.mean():.1f}, "
-              f"RMS = {bkg_rms_val:.2f}")
+        print(
+            f"✓ Polynomial 2D background: mean = {background.mean():.1f}, "
+            f"RMS = {bkg_rms_val:.2f}"
+        )
         return background, background_rms
 
     else:
         raise ValueError(
-            f"Unknown background method '{method}'. "
-            "Choose 'background2d' or 'polynomial'."
+            f"Unknown background method '{method}'. " "Choose 'background2d' or 'polynomial'."
         )
 
 
 # ============================================================================
 # EMPIRICAL PSF CONSTRUCTION
 # ============================================================================
+
 
 def build_epsf(
     image: np.ndarray,
@@ -546,6 +545,7 @@ def build_epsf(
 # ============================================================================
 # PSF FITTING PHOTOMETRY
 # ============================================================================
+
 
 def run_psf_photometry(
     image: np.ndarray,
@@ -649,10 +649,8 @@ def run_psf_photometry(
             x_fit = float(row["x_fit"]) if "x_fit" in phot_table.colnames else pos[0]
             y_fit = float(row["y_fit"]) if "y_fit" in phot_table.colnames else pos[1]
 
-            results.append({"flux": flux, "flux_err": flux_err,
-                            "x_fit": x_fit, "y_fit": y_fit})
+            results.append({"flux": flux, "flux_err": flux_err, "x_fit": x_fit, "y_fit": y_fit})
         else:
-            results.append({"flux": np.nan, "flux_err": np.nan,
-                            "x_fit": pos[0], "y_fit": pos[1]})
+            results.append({"flux": np.nan, "flux_err": np.nan, "x_fit": pos[0], "y_fit": pos[1]})
 
     return results
