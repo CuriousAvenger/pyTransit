@@ -1,0 +1,56 @@
+{
+  "parameters": {
+    "t0": {
+      "value": 60969.255321908924,
+      "uncertainty": 0.000676843143079558
+    },
+    "rp": {
+      "value": 0.10899933500862119,
+      "uncertainty": 0.003045485413538859
+    },
+    "inc": {
+      "value": 82.96151646955272,
+      "uncertainty": 0.07843803067751005
+    },
+    "a": {
+      "value": 7.17,
+      "uncertainty": 0.0
+    },
+    "transit_depth_pct": {
+      "value": 1.1880855032321633,
+      "uncertainty": 0.06639117697083828
+    },
+    "impact_parameter": {
+      "value": 0.8785829313969955,
+      "uncertainty": 0.009741772848473596
+    },
+    "stellar_density_cgs": {
+      "value": 1.129186478780602,
+      "uncertainty": 0.0
+    },
+    "planet_radius_jupiter": {
+      "value": 1.6023323046027602,
+      "uncertainty": 0.04476981131053544
+    },
+    "semi_major_axis_AU": {
+      "value": 0.050370881963662614,
+      "uncertainty": 0.0
+    },
+    "orbital_velocity_kms": {
+      "value": 220.52438019055768,
+      "uncertainty": 0.0
+    }
+  },
+  "metadata": {
+    "target_star_index": 1,
+    "reference_star_indices": [
+      0,
+      2,
+      3
+    ],
+    "period": 2.484934,
+    "t0": 60969.255321908924,
+    "chi_squared": 161.67165896133832,
+    "reduced_chi_squared": 1.3818090509516097
+  }
+}

@@ -100,6 +100,9 @@ class DetrendingConfig:
     mad_sigma: float = 3.5  # MAD rejection threshold
     contamination: float = 0.05  # expected outlier fraction for isolation_forest
 
+    # Out-of-transit baseline
+    oot_percentile: float = 25.0  # percentile of lowest-flux frames used as OOT baseline
+
     # Airmass detrending
     remove_linear_trend: bool = True
     test_airmass: bool = True
@@ -132,6 +135,10 @@ class TransitModelConfig:
     rp_bounds: tuple = (0.085, 0.120)
     a_bounds_factor: float = 0.2  # ±20% of a_guess
     inc_bounds_offset: float = 6.0  # ±6 degrees
+
+    # Fix a/Rs to the guess value (recommended for nearly-grazing transits where
+    # a/Rs is better constrained by stellar spectroscopy than by photometry alone)
+    fix_a_rs: bool = False
 
     # Stellar parameters (for physical unit conversion)
     r_star_solar: Optional[float] = None  # R☉

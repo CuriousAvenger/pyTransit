@@ -7,7 +7,6 @@ Coordinates all pipeline stages from calibration to transit fitting.
 import numpy as np
 from pathlib import Path
 from typing import Dict
-import warnings
 
 from .config import PipelineConfig
 from .io import (
@@ -20,15 +19,15 @@ from .io import (
 from .calibration import CalibrationFrames, create_master_frame
 from .detection import detect_sources, filter_sources, select_reference_stars
 from .photometry import (
-    PhotometryConfig as PhotConfig,
+    ApertureConfig as PhotConfig,
     measure_flux,
     optimize_aperture_radius,
-    estimate_2d_background,
-    build_epsf,
-    run_psf_photometry,
+    refine_centroid,
 )
+from .background import estimate_2d_background
+from .psf import build_epsf, run_psf_photometry
 from .lightcurve import LightCurveBuilder
-from .detrending import detrend_lightcurve_advanced
+from .detrending import detrend_oot
 from .models import TransitFitter
 
 
@@ -218,15 +217,26 @@ class TransitPipeline:
         print(f"✓ Calibration complete: {len(self.calibrated_images)} frames")
 
     def run_detection(self):
-        """Stage 2: Detect sources in all frames."""
+        """Stage 2: Detect sources in frame 0, then track via centroid refinement.
+
+        Running DAOStarFinder independently on every frame is unreliable: the
+        brightness-sorted order of detected stars can change between frames if
+        transparency varies, so ``sources[2]`` in frame 50 may not be the same
+        star as ``sources[2]`` in frame 0.  Instead we:
+        1. Run detection only on the first calibrated frame.
+        2. For every subsequent frame, refine each star's centroid using 2-D
+           Gaussian fitting around its previous position.
+        This guarantees that index ``i`` always refers to the same physical star
+        for the entire observation.
+        """
         if self.calibrated_images is None:
             raise RuntimeError("Must run calibration first")
 
-        print("Detecting sources in all frames...")
+        print("Detecting sources in first calibrated frame...")
 
         self.sources_list = []
 
-        # Detect in first frame to show example
+        # ── Frame 0: full DAOStarFinder detection ─────────────────────────────
         first_frame = self.calibrated_images[0]
         sources_0 = detect_sources(
             first_frame,
@@ -235,44 +245,47 @@ class TransitPipeline:
             threshold_type=self.config.detection.threshold_type,
             exclude_border=self.config.detection.exclude_border,
         )
-
-        # Apply quality filters
         sources_0 = filter_sources(
             sources_0,
             min_sharpness=self.config.detection.min_sharpness,
             max_sharpness=self.config.detection.max_sharpness,
             max_roundness=self.config.detection.max_roundness,
         )
-
         self.sources_list.append(sources_0)
 
-        # Detect in remaining frames
+        # ── Frames 1..N: centroid tracking ────────────────────────────────────
+        n_stars = len(sources_0)
+        print(
+            f"Tracking {n_stars} stars across "
+            f"{len(self.calibrated_images) - 1} remaining frames via centroid refinement..."
+        )
+
         for i, frame in enumerate(self.calibrated_images[1:], start=1):
-            try:
-                sources = detect_sources(
-                    frame,
-                    fwhm=self.config.detection.fwhm,
-                    threshold=self.config.detection.threshold,
-                    threshold_type=self.config.detection.threshold_type,
-                    exclude_border=self.config.detection.exclude_border,
-                )
-                sources = filter_sources(
-                    sources,
-                    min_sharpness=self.config.detection.min_sharpness,
-                    max_sharpness=self.config.detection.max_sharpness,
-                    max_roundness=self.config.detection.max_roundness,
-                )
-                self.sources_list.append(sources)
+            prev_sources = self.sources_list[-1]
+            new_x = []
+            new_y = []
 
-                if self.config.verbose and (i + 1) % 10 == 0:
-                    print(f"  Processed {i+1}/{len(self.calibrated_images)} frames...")
+            for j in range(n_stars):
+                x_prev = float(prev_sources["x_centroid"][j])
+                y_prev = float(prev_sources["y_centroid"][j])
+                try:
+                    x_new, y_new = refine_centroid(frame, (x_prev, y_prev), box_size=51)
+                except Exception:
+                    # Fall back to last known position
+                    x_new, y_new = x_prev, y_prev
+                new_x.append(x_new)
+                new_y.append(y_new)
 
-            except Exception as e:
-                warnings.warn(f"Detection failed for frame {i}: {e}")
-                # Use sources from previous frame as fallback
-                self.sources_list.append(self.sources_list[-1])
+            # Build a source table with tracked positions, keeping frame-0 metadata
+            tracked = sources_0.copy()
+            tracked["x_centroid"] = new_x
+            tracked["y_centroid"] = new_y
+            self.sources_list.append(tracked)
 
-        print(f"\n✓ Detection complete: {len(self.sources_list)} frame source lists")
+            if self.config.verbose and (i + 1) % 20 == 0:
+                print(f"  Tracked {i + 1}/{len(self.calibrated_images)} frames...")
+
+        print(f"\n✓ Detection & tracking complete: {len(self.sources_list)} frames")
 
         # Select target and reference stars (from first frame)
         target_pos, ref_positions, ref_indices = select_reference_stars(
@@ -287,8 +300,8 @@ class TransitPipeline:
             raise RuntimeError("Must run calibration and detection first")
 
         ccd_gain = get_ccd_gain(self.headers[0])
-        phot_method = getattr(self.config.photometry, "method", "aperture")
-        bkg_method = getattr(self.config.photometry, "background_method", "annulus")
+        phot_method = self.config.photometry.method
+        bkg_method = self.config.photometry.background_method
 
         # ── 2D background estimation (used by both modes if not 'annulus') ────
         background_maps = None
@@ -312,11 +325,11 @@ class TransitPipeline:
             first_img_sub = (first_frame - first_bkg) if first_bkg is not None else first_frame
 
             # Use brightest isolated stars for ePSF construction
-            n_psf_stars = getattr(self.config.photometry, "n_psf_stars", 20)
+            n_psf_stars = self.config.photometry.n_psf_stars
             psf_positions = [
                 (
-                    float(self.sources_list[0]["xcentroid"][i]),
-                    float(self.sources_list[0]["ycentroid"][i]),
+                    float(self.sources_list[0]["x_centroid"][i]),
+                    float(self.sources_list[0]["y_centroid"][i]),
                 )
                 for i in range(min(n_psf_stars, len(self.sources_list[0])))
             ]
@@ -335,8 +348,8 @@ class TransitPipeline:
                     bkg_map = background_maps[frame_idx]
                 pos = [
                     (
-                        float(self.sources_list[0]["xcentroid"][star_idx]),
-                        float(self.sources_list[0]["ycentroid"][star_idx]),
+                        float(self.sources_list[0]["x_centroid"][star_idx]),
+                        float(self.sources_list[0]["y_centroid"][star_idx]),
                     )
                 ]
                 results = run_psf_photometry(
@@ -366,8 +379,8 @@ class TransitPipeline:
                 radii_test = np.array(self.config.photometry.aperture_radii_test)
                 first_frame = self.calibrated_images[0]
                 target_pos = (
-                    self.sources_list[0]["xcentroid"][self.config.photometry.target_star_index],
-                    self.sources_list[0]["ycentroid"][self.config.photometry.target_star_index],
+                    self.sources_list[0]["x_centroid"][self.config.photometry.target_star_index],
+                    self.sources_list[0]["y_centroid"][self.config.photometry.target_star_index],
                 )
                 optimal_r = optimize_aperture_radius(
                     first_frame,
@@ -388,10 +401,11 @@ class TransitPipeline:
             print(f"Using {phot_config}")
 
             def photometry_func(image, star_idx):
-                sources = self.sources_list[0]
-                position = (sources["xcentroid"][star_idx], sources["ycentroid"][star_idx])
-                # Optionally subtract 2D background before aperture phot
                 frame_idx = getattr(photometry_func, "_frame_idx", 0)
+                # Use per-frame source positions to track star drift across the observation
+                sources = self.sources_list[frame_idx]
+                position = (sources["x_centroid"][star_idx], sources["y_centroid"][star_idx])
+                # Optionally subtract 2D background before aperture phot
                 img_work = image
                 if background_maps is not None:
                     img_work = image - background_maps[frame_idx]
@@ -432,44 +446,36 @@ class TransitPipeline:
         print(f"\n✓ Light curve extracted: {len(self.lightcurve['times'])} points")
 
     def run_detrending(self):
-        """Stage 4: Detrend light curve and remove outliers."""
+        """Stage 4: Detrend light curve and remove outliers.
+
+        Uses OOT-only (out-of-transit) linear detrending so the transit dip is
+        never used when fitting the baseline trend.  The data are normalised to
+        ~1.0 afterwards, which makes the subsequent transit fit well-conditioned.
+        """
         if self.lightcurve is None:
             raise RuntimeError("Must run photometry first")
 
-        # Extract airmass if available
-        airmass = None
-        if self.config.detrending.test_airmass:
-            try:
-                all_airmass = extract_header_value(self.headers, "AIRMASS")
-                valid_mask = self.lightcurve["valid_frames"]
-                airmass = all_airmass[valid_mask]
-            except Exception:
-                warnings.warn("Could not extract airmass from headers")
+        oot_percentile = self.config.detrending.oot_percentile
+        sigma_threshold = self.config.detrending.sigma_threshold
 
-        # Use advanced detrending pipeline
-        outlier_method = getattr(self.config.detrending, "outlier_method", "rolling_mad")
-        airmass_regression = getattr(self.config.detrending, "airmass_regression", "huber")
-
-        self.detrended_lc = detrend_lightcurve_advanced(
+        self.detrended_lc = detrend_oot(
             self.lightcurve["times"],
             self.lightcurve["fluxes"],
             self.lightcurve["errors"],
-            airmass=airmass,
-            outlier_method=outlier_method,
-            sigma_threshold=self.config.detrending.sigma_threshold,
-            window_size=getattr(self.config.detrending, "window_size", 20),
-            mad_sigma=getattr(self.config.detrending, "mad_sigma", 3.5),
-            contamination=getattr(self.config.detrending, "contamination", 0.05),
-            remove_linear=self.config.detrending.remove_linear_trend,
-            test_airmass=self.config.detrending.test_airmass,
-            airmass_regression=airmass_regression,
-            huber_epsilon=getattr(self.config.detrending, "huber_epsilon", 1.35),
+            oot_percentile=oot_percentile,
+            sigma_threshold=sigma_threshold,
         )
 
         print(f"\n✓ Detrending complete: {len(self.detrended_lc['times'])} points")
 
     def run_transit_fit(self):
-        """Stage 5: Fit transit model to detrended light curve."""
+        """Stage 5: Fit transit model to detrended, normalised light curve.
+
+        Data from ``detrend_oot`` is already normalised to ~1.0, so only four
+        physical parameters need to be fitted: t0, rp, a, inc.  The old
+        ``baseline`` and ``slope`` free parameters have been removed — they
+        created degeneracy with the transit depth and destabilised the fit.
+        """
         if self.detrended_lc is None:
             raise RuntimeError("Must run detrending first")
 
@@ -483,13 +489,11 @@ class TransitPipeline:
             w=self.config.transit_model.omega,
         )
 
-        # Prepare initial parameters and bounds
+        # 4 free parameters only — data is already normalised to ~1.0
         initial_params = {
             "rp": self.config.transit_model.rp_guess,
             "a": self.config.transit_model.a_guess,
             "inc": self.config.transit_model.inc_guess,
-            "baseline": np.median(self.detrended_lc["fluxes"]),
-            "slope": 0.0,
         }
 
         bounds = {
@@ -502,21 +506,16 @@ class TransitPipeline:
                 self.config.transit_model.inc_guess - self.config.transit_model.inc_bounds_offset,
                 self.config.transit_model.inc_guess + self.config.transit_model.inc_bounds_offset,
             ),
-            "baseline": (
-                self.detrended_lc["fluxes"].min() * 0.9,
-                self.detrended_lc["fluxes"].max() * 1.1,
-            ),
-            "slope": (-0.1, 0.1),
         }
 
-        # Fit
+        # Fit — t0 is always free; baseline/slope removed (data already normalised)
         self.fit_result = fitter.fit(
             self.detrended_lc["times"],
             self.detrended_lc["fluxes"],
             self.detrended_lc["errors"],
             initial_params=initial_params,
             bounds=bounds,
-            fix_t0=self.config.transit_model.fix_t0,
+            fix_a_rs=self.config.transit_model.fix_a_rs,
         )
 
         # Derive physical parameters

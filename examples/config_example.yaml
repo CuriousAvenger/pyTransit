@@ -5,10 +5,10 @@
 # DATA PATHS
 # ============================================================================
 paths:
-  data_dir: "./Group8.nosync/data"           # Science frames (WASP-75b)
-  bias_dir: "./Group8.nosync/bias"           # Bias frames
-  dark_dir: "./Group8.nosync/darks"          # Dark frames
-  flat_dir: "./Group8.nosync/flats"          # Flat field frames
+  data_dir: "./sample_data/data"             # Science frames (WASP-75b)
+  bias_dir: "./sample_data/bias"             # Bias frames
+  dark_dir: "./sample_data/darks"            # Dark frames
+  flat_dir: "./sample_data/flats"            # Flat field frames
   output_dir: "./outputs"                     # Where to save results
   
   # File patterns (glob-style)
@@ -105,7 +105,7 @@ detrending:
 transit_model:
   # Orbital parameters (typically fixed from literature)
   period: 2.4842                  # Orbital period (days) - FIXED
-  t0_guess: 2460235.752           # Predicted transit center (MJD) - UPDATE THIS!
+  t0_guess: 2460969.747           # Transit centre JD for 2025-10-20/21 observation
   fix_t0: true                    # Fix t0 during fit? (true recommended unless full transit)
   
   # Limb darkening coefficients (from stellar atmosphere models)

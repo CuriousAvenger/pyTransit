@@ -1,7 +1,6 @@
 """
 Command-line interface for transit photometry pipeline.
 
-Allows running the pipeline from the command line:
     transit-pipeline config.yaml
 """
 
@@ -13,7 +12,7 @@ from .pipeline import TransitPipeline
 from .config import PipelineConfig, create_example_config
 
 
-def main():
+def main() -> None:
     """Main entry point for CLI."""
     parser = argparse.ArgumentParser(
         description="Transit Photometry Pipeline - Exoplanet transit analysis",
@@ -60,7 +59,6 @@ Examples:
 
     args = parser.parse_args()
 
-    # Handle --create-config
     if args.create_config:
         create_example_config(args.create_config)
         print(f"\n✓ Example configuration created: {args.create_config}")
@@ -68,21 +66,17 @@ Examples:
         print(f"    transit-pipeline {args.create_config}")
         return 0
 
-    # Require config file
     if not args.config:
         parser.error("config file required (or use --create-config)")
 
-    # Check config exists
     if not Path(args.config).exists():
         print(f"Error: Configuration file not found: {args.config}", file=sys.stderr)
         return 1
 
     try:
-        # Load configuration
         print(f"Loading configuration from {args.config}...")
         config = PipelineConfig.from_yaml(args.config)
 
-        # Override options from command line
         if args.output:
             config.paths.output_dir = args.output
 
@@ -92,10 +86,8 @@ Examples:
         if args.verbose:
             config.verbose = True
 
-        # Create pipeline
         pipeline = TransitPipeline(config)
 
-        # Determine which stages to run
         if args.stages:
             stages = args.stages
         else:
@@ -103,7 +95,6 @@ Examples:
 
         print(f"\nRunning stages: {', '.join(stages)}\n")
 
-        # Run stages
         if "calibration" in stages:
             print("\n[1/6] Running calibration...")
             pipeline.run_calibration()

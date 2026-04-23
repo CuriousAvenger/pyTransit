@@ -42,10 +42,9 @@ env/
 */.ipynb_checkpoints/*
 
 # Data directories (keep structure but not data)
-Group8.nosync/
+sample_data/
 *_output/
 validation_output/
-pipeline_test_output/
 results/
 output/
 

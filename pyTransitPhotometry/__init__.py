@@ -1,22 +1,10 @@
-"""
-pyTransitPhotometry
-
-A professional Python library for exoplanet transit photometry analysis.
-
-This package provides tools for:
-- CCD calibration (bias, dark, flat correction)
-- Star detection and photometry
-- Differential photometry and light curve extraction
-- Transit model fitting with batman
-- Results validation against literature
-
-Designed for graduate students and researchers performing reproducible transit analyses.
-"""
+"""pyTransitPhotometry — exoplanet transit photometry analysis."""
 
 __version__ = "1.0.0"
 __author__ = "Transit Photometry Team"
 
 from .pipeline import TransitPipeline
 from .config import PipelineConfig
+from .lightcurve import LightCurve
 
-__all__ = ["TransitPipeline", "PipelineConfig"]
+__all__ = ["TransitPipeline", "PipelineConfig", "LightCurve"]

@@ -9,9 +9,11 @@ Implements:
 - Robust Huber regression for airmass detrending
 - Linear trend removal
 - Systematic effects diagnostics
+
 """
 
 import numpy as np
+from numpy.typing import NDArray
 from typing import Tuple, Optional
 import warnings
 
@@ -118,7 +120,7 @@ def sigma_clip(
     return times[mask], fluxes[mask], errors[mask], mask
 
 
-def test_airmass_correlation(airmass: np.ndarray, fluxes: np.ndarray) -> dict:
+def test_airmass_correlation(airmass: NDArray[np.float64], fluxes: NDArray[np.float64]) -> dict:
     """
     Test for correlation between airmass and flux.
 
@@ -377,11 +379,6 @@ def detrend_lightcurve(
     return result
 
 
-# ============================================================================
-# ROLLING-WINDOW MAD FILTER
-# ============================================================================
-
-
 def rolling_mad_filter(
     times: np.ndarray,
     fluxes: np.ndarray,
@@ -428,6 +425,15 @@ def rolling_mad_filter(
     half = window_size // 2
     mask = np.ones(n, dtype=bool)
 
+    # PERF: this loop is O(n²) — for each of the n points it slices and calls
+    # np.median twice on a window of size window_size.  For n > 2000 frames
+    # consider replacing with a stride-tricks approach:
+    #   from numpy.lib.stride_tricks import sliding_window_view
+    #   windows = sliding_window_view(fluxes, window_size)   # O(n·w) array view
+    #   meds = np.median(windows, axis=1)                   # vectorised
+    #   mads  = np.median(np.abs(windows - meds[:, None]), axis=1)
+    # That reduces the Python loop to a single np.median call per row and is
+    # typically 10–50× faster for large arrays.
     for i in range(n):
         lo = max(0, i - half)
         hi = min(n, i + half + 1)
@@ -444,11 +450,6 @@ def rolling_mad_filter(
         f"removed {n_rejected}/{n} outliers ({n_rejected / n * 100:.1f}%)"
     )
     return times[mask], fluxes[mask], errors[mask], mask
-
-
-# ============================================================================
-# ISOLATION FOREST ANOMALY DETECTION
-# ============================================================================
 
 
 def isolation_forest_filter(
@@ -529,11 +530,6 @@ def isolation_forest_filter(
     return times[mask], fluxes[mask], errors[mask], mask
 
 
-# ============================================================================
-# HUBER REGRESSION AIRMASS DETRENDING
-# ============================================================================
-
-
 def huber_airmass_detrend(
     times: np.ndarray,
     fluxes: np.ndarray,
@@ -610,11 +606,6 @@ def huber_airmass_detrend(
         f"intercept={intercept:.6f} (ε={epsilon})"
     )
     return fluxes_detrended, slope, intercept
-
-
-# ============================================================================
-# ENHANCED FULL DETRENDING PIPELINE
-# ============================================================================
 
 
 def detrend_lightcurve_advanced(
@@ -743,3 +734,99 @@ def detrend_lightcurve_advanced(
     print(f"  RMS before: {np.std(fluxes_clean):.6f}  →  " f"after: {np.std(fluxes_detrended):.6f}")
 
     return result
+
+
+def detrend_oot(
+    times: NDArray[np.float64],
+    fluxes: NDArray[np.float64],
+    errors: NDArray[np.float64],
+    oot_percentile: float = 25.0,
+    sigma_threshold: float = 3.0,
+) -> "LightCurve":  # type: ignore[name-defined]  # imported below
+    """
+    Detrend a light curve using only out-of-transit (OOT) data.
+
+    Unlike ``detrend_lightcurve_advanced``, this function fits the linear
+    baseline trend **only** to points in the first and last portions of the
+    time series (controlled by ``oot_percentile``).  This prevents the
+    in-transit dip from biasing the fit and being artificially flattened.
+
+    After removing the trend the data are normalised so OOT flux = 1.0.
+    A final sigma-clipping pass rejects remaining outliers.
+
+    Parameters
+    ----------
+    times : np.ndarray
+        Observation times (any consistent unit).
+    fluxes : np.ndarray
+        Raw differential flux ratios.
+    errors : np.ndarray
+        Flux uncertainties.
+    oot_percentile : float, optional
+        The first and last ``oot_percentile`` percent of time points are
+        treated as OOT for trend fitting (default: 25.0).
+    sigma_threshold : float, optional
+        Sigma threshold for the final outlier clipping (default: 3.0).
+
+    Returns
+    -------
+    result : LightCurve
+        :class:`~lightcurve.LightCurve` dataclass whose attributes are:
+
+        - ``times`` — times after clipping
+        - ``fluxes`` — normalised, detrended fluxes (~1.0 OOT)
+        - ``errors`` — propagated uncertainties
+        - ``mask`` — boolean mask applied to the *input* arrays (True = kept)
+        - ``linear_slope`` — slope of the OOT trend (flux / time_unit)
+        - ``oot_mask`` — boolean mask of the OOT points used for fitting
+
+        The object is fully dict-compatible via ``__getitem__``.
+    """
+    # ── Step 1: Identify OOT by time percentile ───────────────────────────────
+    t_low = np.percentile(times, oot_percentile)
+    t_high = np.percentile(times, 100.0 - oot_percentile)
+    oot_mask_full = (times <= t_low) | (times >= t_high)
+
+    if np.sum(oot_mask_full) < 4:
+        warnings.warn(
+            "Too few OOT points for trend fitting; using all points instead."
+        )
+        oot_mask_full = np.ones(len(times), dtype=bool)
+
+    # ── Step 2: Fit linear trend to OOT only ──────────────────────────────────
+    t_mean = np.mean(times)
+    t_centered = times - t_mean
+
+    t_oot = t_centered[oot_mask_full]
+    f_oot = fluxes[oot_mask_full]
+
+    coeffs = np.polyfit(t_oot, f_oot, deg=1)
+    trend = np.polyval(coeffs, t_centered)
+
+    # ── Step 3: Divide out trend and normalise to 1.0 ─────────────────────────
+    detrended = fluxes / trend
+    errors_detrended = errors / trend
+
+    oot_median = np.median(detrended[oot_mask_full])
+    detrended = detrended / oot_median
+    errors_detrended = errors_detrended / oot_median
+
+    # ── Step 4: Sigma-clip remaining outliers ─────────────────────────────────
+    times_out, fluxes_out, errors_out, clip_mask = sigma_clip(
+        times, detrended, errors_detrended, sigma_threshold=sigma_threshold, max_iterations=5
+    )
+
+    print(f"✓ OOT detrending: {np.sum(oot_mask_full)} OOT points used for trend fit")
+    print(f"  Trend slope : {coeffs[0]:.6f} flux/time-unit")
+    print(f"  Normalisation factor : {oot_median:.6f}")
+    print(f"  Clipped outliers : {np.sum(~clip_mask)}/{len(times)}")
+
+    from .lightcurve import LightCurve  # local import avoids circular dependency
+    return LightCurve(
+        times=times_out,
+        fluxes=fluxes_out,
+        errors=errors_out,
+        mask=clip_mask,
+        linear_slope=float(coeffs[0]),
+        oot_mask=oot_mask_full,
+    )

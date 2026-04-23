@@ -95,7 +95,7 @@ def plot_detected_sources(
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    positions = np.transpose((sources["xcentroid"], sources["ycentroid"]))
+    positions = np.transpose((sources["x_centroid"], sources["y_centroid"]))
     apertures = CircularAperture(positions, r=30)
 
     im = ax.imshow(image, norm=LogNorm(vmin=700, vmax=1400), cmap="viridis", origin="lower")
@@ -104,8 +104,8 @@ def plot_detected_sources(
     # Highlight target and references
     if target_index is not None:
         ax.plot(
-            sources["xcentroid"][target_index],
-            sources["ycentroid"][target_index],
+            sources["x_centroid"][target_index],
+            sources["y_centroid"][target_index],
             "gx",
             markersize=15,
             markeredgewidth=3,
@@ -115,12 +115,12 @@ def plot_detected_sources(
     if reference_indices:
         for i, ref_idx in enumerate(reference_indices):
             ax.plot(
-                sources["xcentroid"][ref_idx],
-                sources["ycentroid"][ref_idx],
+                sources["x_centroid"][ref_idx],
+                sources["y_centroid"][ref_idx],
                 "r+",
                 markersize=15,
                 markeredgewidth=3,
-                label=f"Reference {i+1}" if i == 0 else "",
+                label=f"Reference {i+1}",
             )
 
     ax.set_title(f"Detected Sources (N={len(sources)})", fontsize=14, weight="bold")

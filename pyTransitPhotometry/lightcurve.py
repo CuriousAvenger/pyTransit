@@ -1,149 +1,205 @@
 """
 Light curve construction via differential photometry.
 
-Implements:
-- Multi-frame photometry extraction
-- Differential photometry with weighted reference stars
-- Error propagation
+REFACTOR:
+  - Added ``LightCurve`` dataclass as the canonical, typed internal
+    representation for a differential photometry time series.  All
+    functions that previously returned raw dicts now return ``LightCurve``.
+    Backward-compatible dict-style access (``lc["times"]``) is preserved
+    via ``__getitem__`` so existing notebook / pipeline code continues to
+    work unchanged.
+  - Full PEP 484 type annotations on all public symbols.
+  - NumPy-format docstrings on every public function and method.
 """
 
-import numpy as np
-from typing import List, Tuple
 import warnings
+from dataclasses import dataclass, field, fields
+from typing import Callable, List, Optional, Tuple
+
+import numpy as np
+from numpy.typing import NDArray
+
+
+# ── Canonical data model ───────────────────────────────────────────────────────
+
+
+@dataclass
+class LightCurve:
+    """
+    Canonical internal representation of a differential photometry series.
+
+    Supports both attribute-style (``lc.times``) and dict-style
+    (``lc["times"]``) access for backward compatibility.
+
+    Parameters
+    ----------
+    times : NDArray[np.float64]
+        Observation times (MJD or BJD).
+    fluxes : NDArray[np.float64]
+        Differential flux ratio measurements (normalised to ~1.0 OOT).
+    errors : NDArray[np.float64]
+        1-σ uncertainties on each flux measurement.
+    target_fluxes : NDArray[np.float64], optional
+        Raw target star flux per frame.
+    reference_fluxes : NDArray[np.float64], optional
+        Combined reference ensemble flux per frame.
+    centroids : NDArray[np.float64], optional
+        Target star (x, y) centroid per frame, shape (N, 2).
+    valid_frames : NDArray[np.bool_], optional
+        True where the frame was successfully processed.
+    mask : NDArray[np.bool_], optional
+        Boolean mask applied by detrending / clipping (True = kept).
+    linear_slope : float, optional
+        Slope of the OOT linear trend removed during detrending.
+    oot_mask : NDArray[np.bool_], optional
+        Frames used as out-of-transit baseline for detrending.
+    """
+
+    times: NDArray[np.float64]
+    fluxes: NDArray[np.float64]
+    errors: NDArray[np.float64]
+    target_fluxes: Optional[NDArray[np.float64]] = field(default=None)
+    reference_fluxes: Optional[NDArray[np.float64]] = field(default=None)
+    centroids: Optional[NDArray[np.float64]] = field(default=None)
+    valid_frames: Optional[NDArray[np.bool_]] = field(default=None)
+    mask: Optional[NDArray[np.bool_]] = field(default=None)
+    linear_slope: float = field(default=0.0)
+    oot_mask: Optional[NDArray[np.bool_]] = field(default=None)
+
+    # ── dict-style backward compatibility ─────────────────────────────────────
+
+    def __getitem__(self, key: str) -> object:
+        """Allow ``lc["times"]`` in addition to ``lc.times``."""
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and hasattr(self, key)
+
+    def __len__(self) -> int:
+        return len(self.times)
+
+    def keys(self) -> List[str]:
+        """Return all field names (mirrors dict API)."""
+        return [f.name for f in fields(self)]
+
+    def to_dict(self) -> dict:
+        """Convert to a plain dictionary."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+
+# ── Differential photometry ────────────────────────────────────────────────────
 
 
 def differential_photometry(
     target_flux: float,
     target_err: float,
-    reference_fluxes: np.ndarray,
-    reference_errs: np.ndarray,
+    reference_fluxes: NDArray[np.float64],
+    reference_errs: NDArray[np.float64],
     weighting: str = "inverse_variance",
 ) -> Tuple[float, float]:
     """
-    Compute differential photometry ratio with error propagation.
+    Compute a differential photometry ratio with propagated uncertainties.
 
     Parameters
     ----------
     target_flux : float
-        Target star flux
+        Target star flux (ADU).
     target_err : float
-        Target star flux uncertainty
-    reference_fluxes : np.ndarray
-        Array of reference star fluxes
-    reference_errs : np.ndarray
-        Array of reference star uncertainties
+        Target star flux uncertainty (ADU).
+    reference_fluxes : NDArray[np.float64]
+        Array of reference star fluxes.
+    reference_errs : NDArray[np.float64]
+        Uncertainties on each reference flux.
     weighting : str, optional
-        Method for combining references:
-        - 'inverse_variance' (default): weight by 1/σ²
-        - 'equal': simple average
+        ``'inverse_variance'`` (default) or ``'equal'``.
 
     Returns
     -------
     ratio : float
-        Target flux / reference flux
+        Target flux / weighted-reference flux.
     ratio_err : float
-        Propagated uncertainty on ratio
+        1-σ uncertainty on *ratio* via error propagation.
 
-    Notes
-    -----
-    Differential photometry divides target flux by reference ensemble,
-    removing common systematic effects (airmass, clouds, transparency).
-
-    For weighted mean of references:
-        R = Σ(w_i × F_i) / Σ(w_i)  where w_i = 1/σ_i²
-
-    Error propagation:
-        σ_ratio² = ratio² × [(σ_target/target)² + (σ_ref/ref)²]
-
-    Examples
-    --------
-    >>> ratio, ratio_err = differential_photometry(
-    ...     target_flux=50000, target_err=100,
-    ...     reference_fluxes=np.array([40000, 45000]),
-    ...     reference_errs=np.array([80, 90])
-    ... )
+    Raises
+    ------
+    ValueError
+        If no reference stars are provided, or array lengths mismatch.
     """
-    # Validate inputs
     if len(reference_fluxes) == 0:
         raise ValueError("No reference stars provided")
-
     if len(reference_fluxes) != len(reference_errs):
-        raise ValueError("reference_fluxes and reference_errs must have same length")
+        raise ValueError("reference_fluxes and reference_errs must have equal length")
 
-    # Check for invalid fluxes
     if target_flux <= 0:
-        warnings.warn(f"Target flux non-positive: {target_flux}")
+        warnings.warn(f"Target flux non-positive: {target_flux:.1f}")
         return np.nan, np.nan
 
-    valid_refs = (reference_fluxes > 0) & (reference_errs > 0)
-    if not np.any(valid_refs):
-        warnings.warn("No valid reference stars (all fluxes <= 0)")
+    valid = (reference_fluxes > 0) & (reference_errs > 0)
+    if not np.any(valid):
+        warnings.warn("No valid reference stars (all fluxes ≤ 0)")
         return np.nan, np.nan
 
-    ref_fluxes = reference_fluxes[valid_refs]
-    ref_errs = reference_errs[valid_refs]
+    ref_f = reference_fluxes[valid]
+    ref_e = reference_errs[valid]
 
-    # Compute weighted reference flux
     if weighting == "inverse_variance":
-        weights = 1.0 / ref_errs**2
-        weighted_ref_flux = np.sum(ref_fluxes * weights) / np.sum(weights)
+        weights = 1.0 / ref_e**2
+        weighted_ref = np.sum(ref_f * weights) / np.sum(weights)
         weighted_ref_err = np.sqrt(1.0 / np.sum(weights))
-
     elif weighting == "equal":
-        weighted_ref_flux = np.mean(ref_fluxes)
-        weighted_ref_err = np.sqrt(np.sum(ref_errs**2)) / len(ref_errs)
-
+        weighted_ref = np.mean(ref_f)
+        weighted_ref_err = np.sqrt(np.sum(ref_e**2)) / len(ref_e)
     else:
-        raise ValueError(f"Unknown weighting: {weighting}")
+        raise ValueError(
+            f"Unknown weighting: '{weighting}'. Choose 'inverse_variance' or 'equal'."
+        )
 
-    # Compute ratio
-    ratio = target_flux / weighted_ref_flux
-
-    # Propagate uncertainties
-    # σ_ratio² = ratio² × [(σ_target/F_target)² + (σ_ref/F_ref)²]
+    ratio = target_flux / weighted_ref
     ratio_err = ratio * np.sqrt(
-        (target_err / target_flux) ** 2 + (weighted_ref_err / weighted_ref_flux) ** 2
+        (target_err / target_flux) ** 2 + (weighted_ref_err / weighted_ref) ** 2
     )
-
     return float(ratio), float(ratio_err)
+
+
+# ── Light curve builder ────────────────────────────────────────────────────────
 
 
 class LightCurveBuilder:
     """
-    Build a differential photometry light curve from multi-frame data.
+    Build a differential photometry light curve from a multi-frame sequence.
 
     Parameters
     ----------
     target_index : int
-        Index of target star in source list
+        Index of the target star in the source list (sorted by brightness).
     reference_indices : list of int
-        Indices of reference stars
+        Indices of reference stars.
     weighting : str, optional
-        Reference combination method (default: 'inverse_variance')
+        Reference combination method (default: ``'inverse_variance'``).
 
-    Examples
-    --------
-    >>> builder = LightCurveBuilder(
-    ...     target_index=2,
-    ...     reference_indices=[0, 1],
-    ...     weighting='inverse_variance'
-    ... )
-    >>> lc = builder.build(calibrated_images, headers, sources_list, phot_config)
+    Raises
+    ------
+    ValueError
+        If *target_index* is also in *reference_indices*, or the list is empty.
     """
 
     def __init__(
-        self, target_index: int, reference_indices: List[int], weighting: str = "inverse_variance"
-    ):
+        self,
+        target_index: int,
+        reference_indices: List[int],
+        weighting: str = "inverse_variance",
+    ) -> None:
+        if target_index in reference_indices:
+            raise ValueError("Target cannot be in reference list")
+        if len(reference_indices) == 0:
+            raise ValueError("At least one reference star required")
+
         self.target_index = target_index
         self.reference_indices = reference_indices
         self.weighting = weighting
-
-        # Validate
-        if target_index in reference_indices:
-            raise ValueError("Target cannot be in reference list")
-
-        if len(reference_indices) == 0:
-            raise ValueError("At least one reference star required")
 
         print("✓ Light curve builder initialized")
         print(f"  Target: star #{target_index}")
@@ -152,56 +208,48 @@ class LightCurveBuilder:
 
     def build(
         self,
-        images: np.ndarray,
+        images: NDArray[np.float32],
         sources_per_frame: List,
-        photometry_func,
-        time_extractor,
+        photometry_func: Callable,
+        time_extractor: Callable,
         verbose: bool = True,
-    ) -> dict:
+    ) -> LightCurve:
         """
-        Build light curve from image sequence.
+        Build a ``LightCurve`` from an image sequence.
 
         Parameters
         ----------
-        images : np.ndarray
-            3D array of calibrated images (n_frames, height, width)
+        images : NDArray[np.float32]
+            3-D array of calibrated images ``(n_frames, height, width)``.
         sources_per_frame : list
-            List of source tables, one per frame
+            Source tables with per-frame centroid positions, one per frame.
         photometry_func : callable
-            Function(image, source_idx) -> flux_dict
+            ``f(image, star_index) → dict`` with keys
+            ``'flux'``, ``'flux_err'``, ``'centroid'``.
         time_extractor : callable
-            Function(frame_idx) -> time
+            ``f(frame_index) → float`` returning the observation time.
         verbose : bool, optional
-            Print progress (default: True)
+            Print per-10-frame progress (default: True).
 
         Returns
         -------
-        lightcurve : dict
-            Dictionary containing:
-            - times: observation times
-            - fluxes: differential flux ratios
-            - errors: flux ratio uncertainties
-            - target_fluxes: raw target fluxes
-            - reference_fluxes: combined reference fluxes
-            - centroids: target centroids per frame
-            - valid_frames: boolean mask of successfully processed frames
+        lc : LightCurve
+            Differential photometry light curve.
 
-        Notes
-        -----
-        Frames are skipped if:
-        - Target or reference stars not detected
-        - Photometry fails
-        - Invalid flux values (negative, NaN)
+        Raises
+        ------
+        RuntimeError
+            If no frames could be successfully processed.
         """
         n_frames = len(images)
 
-        times = []
-        ratios = []
-        ratio_errs = []
-        target_fluxes_list = []
-        reference_fluxes_list = []
-        centroids = []
-        valid_frames = []
+        times_list: List[float] = []
+        ratios_list: List[float] = []
+        ratio_errs_list: List[float] = []
+        target_fluxes_list: List[float] = []
+        reference_fluxes_list: List[float] = []
+        centroids_list: List[Tuple[float, float]] = []
+        valid_frames_list: List[bool] = []
 
         for i in range(n_frames):
             try:
@@ -209,47 +257,45 @@ class LightCurveBuilder:
                 sources = sources_per_frame[i]
                 time = time_extractor(i)
 
-                # Check if all required stars are detected
-                n_detected = len(sources)
                 required_indices = [self.target_index] + self.reference_indices
-
-                if max(required_indices) >= n_detected:
+                if max(required_indices) >= len(sources):
                     if verbose:
                         print(
-                            f"⚠  Frame {i+1}/{n_frames}: Missing stars "
-                            f"(only {n_detected} detected), skipping"
+                            f"⚠  Frame {i + 1}/{n_frames}: only {len(sources)} sources "
+                            f"detected (need index {max(required_indices)}), skipping"
                         )
-                    valid_frames.append(False)
+                    valid_frames_list.append(False)
                     continue
 
-                # Measure target
+                # Communicate frame index to the photometry closure so it looks
+                # up the correct per-frame centroid (star drift fix).
+                photometry_func._frame_idx = i
+
                 target_result = photometry_func(image, self.target_index)
                 target_flux = target_result["flux"]
                 target_err = target_result["flux_err"]
                 target_centroid = target_result["centroid"]
 
-                # Measure references
-                ref_fluxes = []
-                ref_errs = []
+                ref_fluxes: List[float] = []
+                ref_errs: List[float] = []
                 for ref_idx in self.reference_indices:
                     try:
-                        ref_result = photometry_func(image, ref_idx)
-                        ref_fluxes.append(ref_result["flux"])
-                        ref_errs.append(ref_result["flux_err"])
-                    except Exception as e:
+                        r = photometry_func(image, ref_idx)
+                        ref_fluxes.append(r["flux"])
+                        ref_errs.append(r["flux_err"])
+                    except Exception as exc:
                         if verbose:
                             print(
-                                f"⚠  Frame {i+1}/{n_frames}: Reference star {ref_idx} failed: {e}"
+                                f"⚠  Frame {i + 1}/{n_frames}: "
+                                f"reference star {ref_idx} failed: {exc}"
                             )
-                        continue
 
-                if len(ref_fluxes) == 0:
+                if not ref_fluxes:
                     if verbose:
-                        print(f"⚠  Frame {i+1}/{n_frames}: No valid references, skipping")
-                    valid_frames.append(False)
+                        print(f"⚠  Frame {i + 1}/{n_frames}: no valid references, skipping")
+                    valid_frames_list.append(False)
                     continue
 
-                # Compute differential photometry
                 ratio, ratio_err = differential_photometry(
                     target_flux,
                     target_err,
@@ -258,84 +304,89 @@ class LightCurveBuilder:
                     weighting=self.weighting,
                 )
 
-                # Check for valid result
-                if not np.isfinite(ratio) or not np.isfinite(ratio_err):
+                if not (np.isfinite(ratio) and np.isfinite(ratio_err)):
                     if verbose:
-                        print(f"⚠  Frame {i+1}/{n_frames}: Invalid ratio, skipping")
-                    valid_frames.append(False)
+                        print(f"⚠  Frame {i + 1}/{n_frames}: non-finite ratio, skipping")
+                    valid_frames_list.append(False)
                     continue
 
-                # Store results
-                times.append(time)
-                ratios.append(ratio)
-                ratio_errs.append(ratio_err)
+                times_list.append(time)
+                ratios_list.append(ratio)
+                ratio_errs_list.append(ratio_err)
                 target_fluxes_list.append(target_flux)
-                reference_fluxes_list.append(np.mean(ref_fluxes))
-                centroids.append(target_centroid)
-                valid_frames.append(True)
+                reference_fluxes_list.append(float(np.mean(ref_fluxes)))
+                centroids_list.append(target_centroid)
+                valid_frames_list.append(True)
 
                 if verbose and (i + 1) % 10 == 0:
-                    print(f"Processed {i+1}/{n_frames} frames...")
+                    print(f"  Processed {i + 1}/{n_frames} frames...")
 
-            except Exception as e:
+            except Exception as exc:
                 if verbose:
-                    print(f"⚠  Frame {i+1}/{n_frames}: Error: {e}, skipping")
-                valid_frames.append(False)
-                continue
+                    print(f"⚠  Frame {i + 1}/{n_frames}: {exc}, skipping")
+                valid_frames_list.append(False)
 
-        if len(times) == 0:
-            raise RuntimeError("No valid frames processed. Check your data and parameters.")
+        if not times_list:
+            raise RuntimeError(
+                "No valid frames processed. Check data integrity and pipeline parameters."
+            )
 
-        print(f"\n✓ Light curve built: {len(times)}/{n_frames} frames valid")
-        print(f"  Mean flux ratio: {np.mean(ratios):.6f}")
-        print(f"  RMS scatter: {np.std(ratios):.6f} ({np.std(ratios)/np.mean(ratios)*100:.2f}%)")
+        ratios_arr = np.array(ratios_list)
+        print(f"\n✓ Light curve built: {len(times_list)}/{n_frames} frames valid")
+        print(f"  Mean flux ratio : {np.mean(ratios_arr):.6f}")
+        print(
+            f"  RMS scatter     : {np.std(ratios_arr):.6f} "
+            f"({np.std(ratios_arr) / np.mean(ratios_arr) * 100:.2f}%)"
+        )
 
-        return {
-            "times": np.array(times),
-            "fluxes": np.array(ratios),
-            "errors": np.array(ratio_errs),
-            "target_fluxes": np.array(target_fluxes_list),
-            "reference_fluxes": np.array(reference_fluxes_list),
-            "centroids": np.array(centroids),
-            "valid_frames": np.array(valid_frames),
-        }
+        return LightCurve(
+            times=np.array(times_list, dtype=np.float64),
+            fluxes=ratios_arr.astype(np.float64),
+            errors=np.array(ratio_errs_list, dtype=np.float64),
+            target_fluxes=np.array(target_fluxes_list, dtype=np.float64),
+            reference_fluxes=np.array(reference_fluxes_list, dtype=np.float64),
+            centroids=np.array(centroids_list, dtype=np.float64),
+            valid_frames=np.array(valid_frames_list, dtype=bool),
+        )
+
+
+# ── Normalisation helper ───────────────────────────────────────────────────────
 
 
 def normalize_lightcurve(
-    fluxes: np.ndarray, errors: np.ndarray, method: str = "median"
-) -> Tuple[np.ndarray, np.ndarray]:
+    fluxes: NDArray[np.float64],
+    errors: NDArray[np.float64],
+    method: str = "median",
+) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
-    Normalize light curve to unity baseline.
+    Normalise a light curve to a unity baseline.
 
     Parameters
     ----------
-    fluxes : np.ndarray
-        Flux values
-    errors : np.ndarray
-        Flux uncertainties
+    fluxes : NDArray[np.float64]
+        Flux values.
+    errors : NDArray[np.float64]
+        Flux uncertainties.
     method : str, optional
-        'median' (default) or 'mean'
+        ``'median'`` (default) or ``'mean'``.
 
     Returns
     -------
-    normalized_fluxes : np.ndarray
-        Fluxes divided by baseline
-    normalized_errors : np.ndarray
-        Scaled uncertainties
+    normalized_fluxes : NDArray[np.float64]
+        Fluxes divided by the baseline estimator.
+    normalized_errors : NDArray[np.float64]
+        Uncertainties scaled by the same factor.
 
-    Notes
-    -----
-    Normalizing to 1.0 makes transit depth directly readable as
-    fractional change (e.g., 0.99 = 1% dip).
+    Raises
+    ------
+    ValueError
+        If *method* is not ``'median'`` or ``'mean'``.
     """
     if method == "median":
-        baseline = np.median(fluxes)
+        baseline = float(np.median(fluxes))
     elif method == "mean":
-        baseline = np.mean(fluxes)
+        baseline = float(np.mean(fluxes))
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError(f"Unknown method: '{method}'. Choose 'median' or 'mean'.")
 
-    normalized_fluxes = fluxes / baseline
-    normalized_errors = errors / baseline
-
-    return normalized_fluxes, normalized_errors
+    return fluxes / baseline, errors / baseline
