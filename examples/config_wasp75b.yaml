@@ -1,8 +1,8 @@
 paths:
-  data_dir: ./sample_data/data
-  bias_dir: ./sample_data/bias
-  dark_dir: ./sample_data/darks
-  flat_dir: ./sample_data/flats
+  data_dir: ./sample_data/wasp75b/data
+  bias_dir: ./sample_data/wasp75b/bias
+  dark_dir: ./sample_data/wasp75b/darks
+  flat_dir: ./sample_data/wasp75b/flats
   output_dir: ./outputs
   data_pattern: "*.fit"
   bias_pattern: "*.fit"

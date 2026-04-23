@@ -1,19 +1,4 @@
-"""
-Empirical PSF construction and PSF-fitting photometry.
-
-REFACTOR: Extracted from ``photometry.py`` where ``build_epsf`` and
-``run_psf_photometry`` were responsible for a second, distinct concern
-(PSF modelling) in a module nominally about aperture photometry.
-
-Separating PSF logic here keeps ``photometry.py`` focused on aperture
-extraction and makes the ePSF pipeline independently importable and
-testable.
-
-Public API
-----------
-build_epsf(image, positions, size, oversampling, maxiters, sigma_clip_val)
-run_psf_photometry(image, positions, epsf, fwhm, fit_shape, background_2d, ccd_gain)
-"""
+"""Empirical PSF construction and PSF-fitting photometry."""
 
 from typing import List, Optional, Tuple
 
@@ -30,41 +15,14 @@ def build_epsf(
     sigma_clip_val: float = 3.0,
 ) -> object:
     """
-    Build an empirical PSF (ePSF) from isolated bright stars.
+    Build an empirical PSF from isolated bright stars (Anderson & King 2000).
 
-    Implements the Anderson & King (2000) ePSF algorithm via photutils.
     Pass 10–50 well-isolated, unsaturated stars for best results.
-
-    Parameters
-    ----------
-    image : NDArray[np.float32]
-        2-D science image (background-subtracted recommended).
-    positions : list of (float, float)
-        (x, y) centroids of stars used to construct the ePSF.
-    size : int, optional
-        Side length (pixels) of each star cutout; forced to odd (default: 25).
-    oversampling : int, optional
-        Pixel oversampling factor for the ePSF grid (default: 4).
-    maxiters : int, optional
-        Maximum ePSF building iterations (default: 10).
-    sigma_clip_val : float, optional
-        Sigma clipping during ePSF construction (default: 3.0).
-
-    Returns
-    -------
-    epsf : photutils.psf.EPSFModel
-        Oversampled empirical PSF model, ready for :func:`run_psf_photometry`.
 
     Raises
     ------
     RuntimeError
-        If no valid star cutouts can be extracted from *image*.
-    ImportError
-        If photutils is not installed.
-
-    Examples
-    --------
-    >>> epsf = build_epsf(frame, positions[:20], size=25, oversampling=4)
+        If no valid star cutouts can be extracted.
     """
     from astropy.nddata import NDData
     from astropy.stats import SigmaClip
@@ -114,35 +72,9 @@ def run_psf_photometry(
     """
     Measure stellar fluxes via PSF fitting.
 
-    Unlike circular aperture photometry, PSF fitting decomposes the
-    observed image into individual stellar profiles, preventing flux
-    dilution from unresolved background stars within the photometric
-    aperture.
-
-    Parameters
-    ----------
-    image : NDArray[np.float32]
-        2-D science image.
-    positions : list of (float, float)
-        (x, y) centroids for each star to measure.
-    epsf : EPSFModel
-        Empirical PSF model from :func:`build_epsf`.
-    fwhm : float, optional
-        Approximate PSF FWHM in pixels; sets the aperture radius used
-        internally (default: 5.0).
-    fit_shape : int, optional
-        Side length (pixels) of the fitting region per source; forced to
-        odd (default: 11).
-    background_2d : NDArray[np.float32], optional
-        2-D background map to subtract before PSF fitting.
-    ccd_gain : float, optional
-        CCD gain in e⁻/ADU for Poisson error estimation (default: 1.0).
-
-    Returns
-    -------
-    results : list of dict
-        One dict per input position with keys:
-        ``'flux'``, ``'flux_err'``, ``'x_fit'``, ``'y_fit'``.
+    Returns a list of dicts with keys ``'flux'``, ``'flux_err'``,
+    ``'x_fit'``, ``'y_fit'`` for each input position.
+    If *background_2d* is provided it is subtracted before fitting.
 
     Raises
     ------
@@ -150,15 +82,6 @@ def run_psf_photometry(
         If photutils < 1.8 is installed.
     RuntimeError
         If the PSF fitting algorithm fails.
-
-    Notes
-    -----
-    *background_2d* is subtracted before fitting to isolate stellar signal.
-
-    Examples
-    --------
-    >>> results = run_psf_photometry(frame, positions, epsf, fwhm=5.0)
-    >>> target_flux = results[0]['flux']
     """
     try:
         from photutils.psf import PSFPhotometry  # photutils >= 1.8
@@ -197,7 +120,6 @@ def run_psf_photometry(
     for i, pos in enumerate(positions):
         if i < len(phot_table):
             row = phot_table[i]
-            # Column names differ across photutils versions
             flux = np.nan
             for flux_col in ("flux_fit", "flux", "aperture_sum"):
                 if flux_col in phot_table.colnames:

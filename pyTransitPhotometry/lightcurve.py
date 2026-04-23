@@ -1,16 +1,4 @@
-"""
-Light curve construction via differential photometry.
-
-REFACTOR:
-  - Added ``LightCurve`` dataclass as the canonical, typed internal
-    representation for a differential photometry time series.  All
-    functions that previously returned raw dicts now return ``LightCurve``.
-    Backward-compatible dict-style access (``lc["times"]``) is preserved
-    via ``__getitem__`` so existing notebook / pipeline code continues to
-    work unchanged.
-  - Full PEP 484 type annotations on all public symbols.
-  - NumPy-format docstrings on every public function and method.
-"""
+"""Differential photometry light curve construction."""
 
 import warnings
 from dataclasses import dataclass, field, fields
@@ -66,7 +54,6 @@ class LightCurve:
     linear_slope: float = field(default=0.0)
     oot_mask: Optional[NDArray[np.bool_]] = field(default=None)
 
-    # ── dict-style backward compatibility ─────────────────────────────────────
 
     def __getitem__(self, key: str) -> object:
         """Allow ``lc["times"]`` in addition to ``lc.times``."""
@@ -90,8 +77,6 @@ class LightCurve:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
-# ── Differential photometry ────────────────────────────────────────────────────
-
 
 def differential_photometry(
     target_flux: float,
@@ -105,28 +90,17 @@ def differential_photometry(
 
     Parameters
     ----------
-    target_flux : float
-        Target star flux (ADU).
-    target_err : float
-        Target star flux uncertainty (ADU).
-    reference_fluxes : NDArray[np.float64]
-        Array of reference star fluxes.
-    reference_errs : NDArray[np.float64]
-        Uncertainties on each reference flux.
-    weighting : str, optional
+    weighting : str
         ``'inverse_variance'`` (default) or ``'equal'``.
 
     Returns
     -------
-    ratio : float
-        Target flux / weighted-reference flux.
-    ratio_err : float
-        1-σ uncertainty on *ratio* via error propagation.
+    ratio, ratio_err : float
 
     Raises
     ------
     ValueError
-        If no reference stars are provided, or array lengths mismatch.
+        If no reference stars are provided or array lengths mismatch.
     """
     if len(reference_fluxes) == 0:
         raise ValueError("No reference stars provided")
@@ -164,26 +138,15 @@ def differential_photometry(
     return float(ratio), float(ratio_err)
 
 
-# ── Light curve builder ────────────────────────────────────────────────────────
-
 
 class LightCurveBuilder:
     """
     Build a differential photometry light curve from a multi-frame sequence.
 
-    Parameters
-    ----------
-    target_index : int
-        Index of the target star in the source list (sorted by brightness).
-    reference_indices : list of int
-        Indices of reference stars.
-    weighting : str, optional
-        Reference combination method (default: ``'inverse_variance'``).
-
     Raises
     ------
     ValueError
-        If *target_index* is also in *reference_indices*, or the list is empty.
+        If *target_index* is in *reference_indices* or the list is empty.
     """
 
     def __init__(
@@ -216,25 +179,6 @@ class LightCurveBuilder:
     ) -> LightCurve:
         """
         Build a ``LightCurve`` from an image sequence.
-
-        Parameters
-        ----------
-        images : NDArray[np.float32]
-            3-D array of calibrated images ``(n_frames, height, width)``.
-        sources_per_frame : list
-            Source tables with per-frame centroid positions, one per frame.
-        photometry_func : callable
-            ``f(image, star_index) → dict`` with keys
-            ``'flux'``, ``'flux_err'``, ``'centroid'``.
-        time_extractor : callable
-            ``f(frame_index) → float`` returning the observation time.
-        verbose : bool, optional
-            Print per-10-frame progress (default: True).
-
-        Returns
-        -------
-        lc : LightCurve
-            Differential photometry light curve.
 
         Raises
         ------
@@ -350,8 +294,6 @@ class LightCurveBuilder:
         )
 
 
-# ── Normalisation helper ───────────────────────────────────────────────────────
-
 
 def normalize_lightcurve(
     fluxes: NDArray[np.float64],
@@ -359,28 +301,17 @@ def normalize_lightcurve(
     method: str = "median",
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
-    Normalise a light curve to a unity baseline.
+    Normalise a light curve to unity baseline.
 
     Parameters
     ----------
-    fluxes : NDArray[np.float64]
-        Flux values.
-    errors : NDArray[np.float64]
-        Flux uncertainties.
-    method : str, optional
+    method : str
         ``'median'`` (default) or ``'mean'``.
-
-    Returns
-    -------
-    normalized_fluxes : NDArray[np.float64]
-        Fluxes divided by the baseline estimator.
-    normalized_errors : NDArray[np.float64]
-        Uncertainties scaled by the same factor.
 
     Raises
     ------
     ValueError
-        If *method* is not ``'median'`` or ``'mean'``.
+        If *method* is unknown.
     """
     if method == "median":
         baseline = float(np.median(fluxes))

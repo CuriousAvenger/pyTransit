@@ -1,16 +1,4 @@
-"""
-Detrending and outlier removal for light curves.
-
-Implements:
-- Sigma clipping for outlier rejection
-- Rolling-window MAD filter for tracking drift rejection
-- Isolation Forest anomaly detection
-- Airmass correlation analysis
-- Robust Huber regression for airmass detrending
-- Linear trend removal
-- Systematic effects diagnostics
-
-"""
+"""Detrending and outlier removal for light curves."""
 
 import numpy as np
 from numpy.typing import NDArray
@@ -27,49 +15,14 @@ def sigma_clip(
     method: str = "median",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Remove outliers using iterative sigma clipping.
+    Remove outliers via iterative sigma clipping.
+
+    Also rejects points with errors > 3× median error.
 
     Parameters
     ----------
-    times : np.ndarray
-        Observation times
-    fluxes : np.ndarray
-        Flux measurements
-    errors : np.ndarray
-        Flux uncertainties
-    sigma_threshold : float, optional
-        Sigma threshold for clipping (default: 3.0)
-    max_iterations : int, optional
-        Maximum number of clipping iterations (default: 5)
-    method : str, optional
-        'median' (default, robust) or 'mean'
-
-    Returns
-    -------
-    times_clipped : np.ndarray
-        Clipped times
-    fluxes_clipped : np.ndarray
-        Clipped fluxes
-    errors_clipped : np.ndarray
-        Clipped errors
-    mask : np.ndarray
-        Boolean mask (True = kept, False = rejected)
-
-    Notes
-    -----
-    Iterative sigma clipping:
-    1. Compute central value (median/mean) and scatter (std)
-    2. Reject points > sigma_threshold × scatter from center
-    3. Repeat until no new outliers or max_iterations reached
-
-    Also rejects points with errors > 3× median error (bad photometry).
-
-    Examples
-    --------
-    >>> times_clean, fluxes_clean, errs_clean, mask = sigma_clip(
-    ...     times, fluxes, errors, sigma_threshold=3.0
-    ... )
-    >>> print(f"Rejected {np.sum(~mask)} outliers")
+    method : str
+        ``'median'`` (default, robust) or ``'mean'``.
     """
     mask = np.ones(len(fluxes), dtype=bool)
 
@@ -80,30 +33,23 @@ def sigma_clip(
             warnings.warn("Too few points remaining after sigma clipping")
             break
 
-        # Compute central value and scatter
         if method == "median":
             center = np.median(current_fluxes)
-            # Use MAD for robust scatter estimate
             mad = np.median(np.abs(current_fluxes - center))
-            scatter = 1.4826 * mad  # Convert MAD to std for normal distribution
+            scatter = 1.4826 * mad
         elif method == "mean":
             center = np.mean(current_fluxes)
             scatter = np.std(current_fluxes)
         else:
             raise ValueError(f"Unknown method: {method}")
 
-        # Identify outliers
         deviation = np.abs(fluxes - center)
         flux_outliers = deviation > sigma_threshold * scatter
 
-        # Also clip points with unusually large errors
         median_error = np.median(errors[mask])
         error_outliers = errors > 3 * median_error
 
-        # Update mask
         new_mask = mask & ~flux_outliers & ~error_outliers
-
-        # Check for convergence
         if np.array_equal(new_mask, mask):
             break
 
@@ -122,46 +68,14 @@ def sigma_clip(
 
 def test_airmass_correlation(airmass: NDArray[np.float64], fluxes: NDArray[np.float64]) -> dict:
     """
-    Test for correlation between airmass and flux.
-
-    Parameters
-    ----------
-    airmass : np.ndarray
-        Airmass values
-    fluxes : np.ndarray
-        Flux measurements
+    Test for Pearson correlation between airmass and flux.
 
     Returns
     -------
     result : dict
-        Dictionary containing:
-        - correlation: Pearson correlation coefficient
-        - slope: linear fit slope (dF/dX)
-        - intercept: linear fit intercept
-        - trend_percent: flux change over airmass range (%)
-        - needs_correction: bool, True if |r| > 0.3
-
-    Notes
-    -----
-    Airmass affects flux via atmospheric extinction:
-        F_obs = F_0 × 10^(-k×X/2.5)
-
-    where k is extinction coefficient and X is airmass.
-
-    Differential photometry should cancel most airmass effects if
-    target and references have similar colors. Residual correlation
-    suggests:
-    - Color mismatch between target and references
-    - Non-photometric conditions
-    - Poor reference star selection
-
-    Examples
-    --------
-    >>> result = test_airmass_correlation(airmass, fluxes)
-    >>> if result['needs_correction']:
-    ...     print("Airmass correction recommended")
+        Keys: ``'correlation'``, ``'slope'``, ``'intercept'``,
+        ``'trend_percent'``, ``'needs_correction'`` (True if |r| > 0.3).
     """
-    # Remove NaN values
     valid = np.isfinite(airmass) & np.isfinite(fluxes)
 
     if np.sum(valid) < 3:
@@ -177,19 +91,15 @@ def test_airmass_correlation(airmass: NDArray[np.float64], fluxes: NDArray[np.fl
     airmass_valid = airmass[valid]
     fluxes_valid = fluxes[valid]
 
-    # Compute correlation
     correlation = np.corrcoef(airmass_valid, fluxes_valid)[0, 1]
 
-    # Linear fit
     coeffs = np.polyfit(airmass_valid, fluxes_valid, deg=1)
     slope, intercept = coeffs[0], coeffs[1]
 
-    # Compute trend magnitude
     airmass_range = airmass_valid.max() - airmass_valid.min()
     flux_change = slope * airmass_range
     trend_percent = abs(flux_change) / np.mean(fluxes_valid) * 100
 
-    # Decision threshold
     needs_correction = abs(correlation) > 0.3
 
     print(f"\n{'='*60}")
@@ -225,64 +135,27 @@ def remove_linear_trend(
     return_model: bool = False,
 ) -> Tuple[np.ndarray, float, float]:
     """
-    Remove linear trend from light curve.
+    Remove a linear trend, preserving the mean flux level.
 
-    Parameters
-    ----------
-    times : np.ndarray
-        Observation times
-    fluxes : np.ndarray
-        Flux measurements
-    errors : np.ndarray, optional
-        Flux uncertainties (for weighted fit)
-    return_model : bool, optional
-        If True, return trend model instead of detrended fluxes
-
-    Returns
-    -------
-    detrended_fluxes : np.ndarray
-        Fluxes with linear trend removed (or model if return_model=True)
-    slope : float
-        Linear trend slope
-    intercept : float
-        Linear trend intercept
-
-    Notes
-    -----
-    Fits F = slope × (t - t_mean) + intercept
-    Then returns F_detrended = F - (slope × (t - t_mean))
-
-    This preserves the mean flux level while removing the trend.
-
-    Examples
-    --------
-    >>> detrended, slope, intercept = remove_linear_trend(
-    ...     times, fluxes, errors=errors
-    ... )
-    >>> print(f"Removed trend: {slope:.6f} flux/day")
+    Fits ``F = slope × (t - t_mean) + intercept``, then subtracts only the
+    slope component so the mean is preserved.
     """
-    # Center times for numerical stability
     t_mean = np.mean(times)
     t_centered = times - t_mean
 
-    # Fit linear trend
     if errors is not None and np.all(errors > 0):
-        # Weighted least squares
         weights = 1.0 / errors**2
         coeffs = np.polyfit(t_centered, fluxes, deg=1, w=weights)
     else:
-        # Ordinary least squares
         coeffs = np.polyfit(t_centered, fluxes, deg=1)
 
     slope, intercept = coeffs[0], coeffs[1]
 
-    # Compute trend model
     trend_model = slope * t_centered + intercept
 
     if return_model:
         return trend_model, slope, intercept
     else:
-        # Remove only the slope component, preserving mean level
         detrended = fluxes - (slope * t_centered)
 
         print(f"✓ Linear trend removed: slope = {slope:.6f} flux/day")
@@ -301,60 +174,27 @@ def detrend_lightcurve(
     test_airmass: bool = True,
 ) -> dict:
     """
-    Full detrending pipeline: outlier removal + trend removal.
-
-    Parameters
-    ----------
-    times : np.ndarray
-        Observation times
-    fluxes : np.ndarray
-        Flux measurements
-    errors : np.ndarray
-        Flux uncertainties
-    airmass : np.ndarray, optional
-        Airmass values for correlation test
-    sigma_threshold : float, optional
-        Sigma clipping threshold (default: 3.0)
-    remove_linear : bool, optional
-        Remove linear trend (default: True)
-    test_airmass : bool, optional
-        Test for airmass correlation (default: True)
+    Detrending pipeline: sigma clipping + optional airmass test + linear detrend.
 
     Returns
     -------
     result : dict
-        Dictionary containing:
-        - times: detrended times
-        - fluxes: detrended fluxes
-        - errors: corresponding errors
-        - mask: boolean mask of kept points
-        - linear_slope: fitted linear slope (if remove_linear=True)
-        - airmass_test: airmass correlation results (if test_airmass=True)
-
-    Examples
-    --------
-    >>> result = detrend_lightcurve(
-    ...     times, fluxes, errors, airmass=airmass_values,
-    ...     sigma_threshold=3.0, remove_linear=True
-    ... )
-    >>> lc = result['fluxes']
+        Keys: ``'times'``, ``'fluxes'``, ``'errors'``, ``'mask'``,
+        ``'linear_slope'``, ``'airmass_test'``.
     """
     result = {}
 
-    # Step 1: Sigma clipping
     times_clean, fluxes_clean, errors_clean, mask = sigma_clip(
         times, fluxes, errors, sigma_threshold=sigma_threshold
     )
 
     result["mask"] = mask
 
-    # Step 2: Airmass correlation test
     if test_airmass and airmass is not None:
         airmass_clean = airmass[mask]
         airmass_result = test_airmass_correlation(airmass_clean, fluxes_clean)
         result["airmass_test"] = airmass_result
 
-    # Step 3: Linear detrending
     if remove_linear:
         fluxes_detrended, slope, intercept = remove_linear_trend(
             times_clean, fluxes_clean, errors_clean
@@ -419,21 +259,15 @@ def rolling_mad_filter(
 
     Notes
     -----
-    MAD-derived σ:  σ_MAD = 1.4826 × MAD (consistent with Gaussian σ).
-    """
-    n = len(fluxes)
-    half = window_size // 2
-    mask = np.ones(n, dtype=bool)
+    MAD-derived σ: σ_MAD = 1.4826 × MAD (consistent with Gaussian σ).
 
-    # PERF: this loop is O(n²) — for each of the n points it slices and calls
-    # np.median twice on a window of size window_size.  For n > 2000 frames
-    # consider replacing with a stride-tricks approach:
-    #   from numpy.lib.stride_tricks import sliding_window_view
-    #   windows = sliding_window_view(fluxes, window_size)   # O(n·w) array view
-    #   meds = np.median(windows, axis=1)                   # vectorised
-    #   mads  = np.median(np.abs(windows - meds[:, None]), axis=1)
-    # That reduces the Python loop to a single np.median call per row and is
-    # typically 10–50× faster for large arrays.
+    PERF: inner loop is O(n²); for n > 2000 frames, replace with
+    ``sliding_window_view`` + vectorised ``np.median`` for 10–50× speedup.
+    """
+    n = len(times)
+    mask = np.ones(n, dtype=bool)
+    half = window_size // 2
+
     for i in range(n):
         lo = max(0, i - half)
         hi = min(n, i + half + 1)
@@ -461,40 +295,14 @@ def isolation_forest_filter(
     random_state: int = 42,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Reject anomalies (tracking drifts, scintillation spikes) via Isolation Forest.
+    Reject anomalies via Isolation Forest (tracking drifts, scintillation spikes).
 
-    The algorithm isolates anomalies by randomly partitioning the feature space;
-    anomalous points require fewer splits than normal inliers.
+    Features: normalised (time, flux, local flux gradient). Requires scikit-learn.
 
     Parameters
     ----------
-    times : np.ndarray
-        Observation times.
-    fluxes : np.ndarray
-        Flux measurements.
-    errors : np.ndarray
-        Flux uncertainties.
-    contamination : float, optional
-        Expected fraction of outliers in [0, 0.5] (default: 0.05).
-        Set higher (~0.10) for data with severe tracking problems.
-    n_estimators : int, optional
-        Number of isolation trees (default: 200).
-    random_state : int, optional
-        Random seed for reproducibility (default: 42).
-
-    Returns
-    -------
-    times_clean, fluxes_clean, errors_clean : np.ndarray
-        Filtered arrays.
-    mask : np.ndarray of bool
-        True where the point was classified as an inlier.
-
-    Notes
-    -----
-    Features used: normalised (time, flux, local flux gradient).
-    The gradient distinguishes sharp tracking spikes (large gradient) from
-    smooth transit ingress/egress, protecting genuine astrophysical signal.
-    Requires ``scikit-learn``.
+    contamination : float
+        Expected outlier fraction (default: 0.05).
     """
     try:
         from sklearn.ensemble import IsolationForest
@@ -538,41 +346,20 @@ def huber_airmass_detrend(
     epsilon: float = 1.35,
 ) -> Tuple[np.ndarray, float, float]:
     """
-    Remove airmass-correlated atmospheric extinction via robust Huber regression.
+    Remove airmass-correlated extinction via robust Huber regression.
 
-    Ordinary least squares (OLS) is sensitive to outliers that inflate the
-    fitted extinction slope, biasing the out-of-transit baseline and
-    underestimating transit depth (producing high χ²_red).  Huber regression
-    minimises a combined L1/L2 loss, making it robust to such outliers.
+    Huber regression (L1/L2 hybrid) is robust to flux outliers that would
+    bias OLS. Requires scikit-learn.
 
     Parameters
     ----------
-    times : np.ndarray
-        Observation times (unused in fit; retained for API consistency).
-    fluxes : np.ndarray
-        Flux measurements.
-    errors : np.ndarray
-        Flux uncertainties (used as inverse-variance weights).
-    airmass : np.ndarray
-        Airmass values at each observation epoch.
-    epsilon : float, optional
-        Huber transition parameter (default: 1.35 ≈ 95% Gaussian efficiency).
-        Smaller values increase robustness at the cost of efficiency.
-
-    Returns
-    -------
-    fluxes_detrended : np.ndarray
-        Airmass-corrected fluxes, normalised so that the out-of-transit
-        baseline is preserved.
-    slope : float
-        Fitted extinction slope (Δflux / Δairmass).
-    intercept : float
-        Fitted intercept.
+    epsilon : float
+        Huber transition parameter (default: 1.35 ≈95 % Gaussian efficiency).
 
     Notes
     -----
-    Detrending: ``F_corr = F_obs / (trend / mean(trend))``
-    so the mean flux level is preserved.  Requires ``scikit-learn``.
+    Normalisation: ``F_corr = F_obs / (trend / mean(trend))`` — preserves
+    mean flux level.
     """
     try:
         from sklearn.linear_model import HuberRegressor
@@ -624,32 +411,14 @@ def detrend_lightcurve_advanced(
     huber_epsilon: float = 1.35,
 ) -> dict:
     """
-    Full detrending pipeline with advanced anomaly rejection and robust regression.
+    Full detrending: anomaly rejection + robust airmass detrend + linear detrend.
 
     Parameters
     ----------
-    times, fluxes, errors : np.ndarray
-        Light curve arrays.
-    airmass : np.ndarray, optional
-        Airmass values for extinction detrending.
-    outlier_method : str, optional
+    outlier_method : str
         ``'sigma_clip'``, ``'rolling_mad'`` (default), or ``'isolation_forest'``.
-    sigma_threshold : float, optional
-        Sigma threshold for ``'sigma_clip'`` (default: 3.0).
-    window_size : int, optional
-        Rolling window size for ``'rolling_mad'`` (default: 20).
-    mad_sigma : float, optional
-        MAD rejection threshold (default: 3.5).
-    contamination : float, optional
-        Expected outlier fraction for ``'isolation_forest'`` (default: 0.05).
-    remove_linear : bool, optional
-        Remove linear time trend (default: True).
-    test_airmass : bool, optional
-        Test for airmass–flux correlation (default: True).
-    airmass_regression : str, optional
-        ``'ols'`` or ``'huber'`` (default) for airmass detrending.
-    huber_epsilon : float, optional
-        Huber ε parameter (default: 1.35).
+    airmass_regression : str
+        ``'ols'`` or ``'huber'`` (default).
 
     Returns
     -------
@@ -660,7 +429,7 @@ def detrend_lightcurve_advanced(
     """
     result = {}
 
-    # ── Step 1: Anomaly / outlier rejection ──────────────────────────────────
+
     if outlier_method == "sigma_clip":
         times_clean, fluxes_clean, errors_clean, mask = sigma_clip(
             times, fluxes, errors, sigma_threshold=sigma_threshold
@@ -688,7 +457,7 @@ def detrend_lightcurve_advanced(
 
     result["mask"] = mask
 
-    # ── Step 2: Airmass correlation test and robust detrending ───────────────
+
     if test_airmass and airmass is not None:
         airmass_clean = airmass[mask]
         airmass_result = test_airmass_correlation(airmass_clean, fluxes_clean)
@@ -706,14 +475,13 @@ def detrend_lightcurve_advanced(
                 result["huber_slope"] = huber_slope
                 result["huber_intercept"] = huber_intercept
             else:
-                # OLS via existing remove_linear_trend on airmass
                 coeffs = np.polyfit(airmass_clean - airmass_clean.mean(), fluxes_clean, 1)
                 trend = np.polyval(coeffs, airmass_clean - airmass_clean.mean())
                 fluxes_clean = fluxes_clean / (trend / np.mean(trend))
                 result["huber_slope"] = float(coeffs[0])
                 result["huber_intercept"] = float(coeffs[1])
 
-    # ── Step 3: Linear time detrending ───────────────────────────────────────
+
     if remove_linear:
         fluxes_detrended, slope, intercept = remove_linear_trend(
             times_clean, fluxes_clean, errors_clean
@@ -744,45 +512,18 @@ def detrend_oot(
     sigma_threshold: float = 3.0,
 ) -> "LightCurve":  # type: ignore[name-defined]  # imported below
     """
-    Detrend a light curve using only out-of-transit (OOT) data.
+    Detrend using only out-of-transit (OOT) baseline points.
 
-    Unlike ``detrend_lightcurve_advanced``, this function fits the linear
-    baseline trend **only** to points in the first and last portions of the
-    time series (controlled by ``oot_percentile``).  This prevents the
-    in-transit dip from biasing the fit and being artificially flattened.
-
-    After removing the trend the data are normalised so OOT flux = 1.0.
-    A final sigma-clipping pass rejects remaining outliers.
+    Fits a linear trend to the first and last *oot_percentile* percent of
+    observations, divides it out, normalises to OOT median = 1.0, then
+    sigma-clips remaining outliers.
 
     Parameters
     ----------
-    times : np.ndarray
-        Observation times (any consistent unit).
-    fluxes : np.ndarray
-        Raw differential flux ratios.
-    errors : np.ndarray
-        Flux uncertainties.
-    oot_percentile : float, optional
-        The first and last ``oot_percentile`` percent of time points are
-        treated as OOT for trend fitting (default: 25.0).
-    sigma_threshold : float, optional
-        Sigma threshold for the final outlier clipping (default: 3.0).
-
-    Returns
-    -------
-    result : LightCurve
-        :class:`~lightcurve.LightCurve` dataclass whose attributes are:
-
-        - ``times`` — times after clipping
-        - ``fluxes`` — normalised, detrended fluxes (~1.0 OOT)
-        - ``errors`` — propagated uncertainties
-        - ``mask`` — boolean mask applied to the *input* arrays (True = kept)
-        - ``linear_slope`` — slope of the OOT trend (flux / time_unit)
-        - ``oot_mask`` — boolean mask of the OOT points used for fitting
-
-        The object is fully dict-compatible via ``__getitem__``.
+    oot_percentile : float
+        Fraction of the time series (each end) used as OOT baseline (default: 25.0).
     """
-    # ── Step 1: Identify OOT by time percentile ───────────────────────────────
+
     t_low = np.percentile(times, oot_percentile)
     t_high = np.percentile(times, 100.0 - oot_percentile)
     oot_mask_full = (times <= t_low) | (times >= t_high)
@@ -793,7 +534,7 @@ def detrend_oot(
         )
         oot_mask_full = np.ones(len(times), dtype=bool)
 
-    # ── Step 2: Fit linear trend to OOT only ──────────────────────────────────
+
     t_mean = np.mean(times)
     t_centered = times - t_mean
 
@@ -803,7 +544,7 @@ def detrend_oot(
     coeffs = np.polyfit(t_oot, f_oot, deg=1)
     trend = np.polyval(coeffs, t_centered)
 
-    # ── Step 3: Divide out trend and normalise to 1.0 ─────────────────────────
+
     detrended = fluxes / trend
     errors_detrended = errors / trend
 
@@ -811,7 +552,7 @@ def detrend_oot(
     detrended = detrended / oot_median
     errors_detrended = errors_detrended / oot_median
 
-    # ── Step 4: Sigma-clip remaining outliers ─────────────────────────────────
+
     times_out, fluxes_out, errors_out, clip_mask = sigma_clip(
         times, detrended, errors_detrended, sigma_threshold=sigma_threshold, max_iterations=5
     )

@@ -19,36 +19,17 @@ def load_fits_files(
     directory: str, pattern: str = "*.fits", dtype: np.dtype = np.float32, verbose: bool = True
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     """
-    Load FITS files from a directory.
+    Load FITS files from a directory into a 3-D array.
 
-    Parameters
-    ----------
-    directory : str
-        Path to directory containing FITS files
-    pattern : str, optional
-        Glob pattern for file matching (default: "*.fits")
-    dtype : np.dtype, optional
-        Data type for image arrays (default: float32 for memory efficiency)
-    verbose : bool, optional
-        Print loading progress (default: True)
-
-    Returns
-    -------
-    data : np.ndarray
-        3D array of shape (n_frames, height, width)
-    headers : list of dict
-        FITS headers as dictionaries
+    Returns (data, headers) where data is (n_frames, H, W) and headers is a
+    list of dicts. Files are sorted alphabetically.
 
     Raises
     ------
     FileNotFoundError
-        If directory doesn't exist or no files match pattern
+        If directory or matching files don't exist.
     ValueError
-        If FITS files have inconsistent dimensions
-
-    Notes
-    -----
-    Files are sorted alphabetically to ensure consistent ordering.
+        If FITS files have inconsistent dimensions.
     """
     if not os.path.isdir(directory):
         raise FileNotFoundError(f"Directory not found: {directory}")
@@ -64,7 +45,6 @@ def load_fits_files(
     for i, filepath in enumerate(files):
         try:
             with fits.open(filepath) as hdul:
-                # Get primary HDU data
                 img_data = hdul[0].data
                 header = dict(hdul[0].header)
 
@@ -85,7 +65,6 @@ def load_fits_files(
     if not data_list:
         raise ValueError(f"No valid FITS data loaded from {directory}")
 
-    # Verify consistent dimensions
     shapes = [arr.shape for arr in data_list]
     if len(set(shapes)) > 1:
         raise ValueError(
@@ -107,29 +86,7 @@ def extract_header_value(
     """
     Extract a header value from multiple FITS headers.
 
-    Parameters
-    ----------
-    headers : list of dict
-        FITS headers
-    key : str
-        Primary header key to extract
-    default : any, optional
-        Default value if key not found
-    fallback_keys : list of str, optional
-        Alternative keys to try if primary key not found
-
-    Returns
-    -------
-    values : np.ndarray
-        Array of extracted values
-
-    Examples
-    --------
-    >>> times = extract_header_value(headers, 'JD-HELIO', default=0.0)
-    >>> airmass = extract_header_value(
-    ...     headers, 'AIRMASS',
-    ...     fallback_keys=['SECZ', 'AIRMASS-START']
-    ... )
+    Tries *key* first, then each of *fallback_keys*. Returns *default* if none found.
     """
     values = []
     all_keys = [key] + (fallback_keys or [])
@@ -153,17 +110,7 @@ def get_ccd_gain(header: Dict[str, Any]) -> float:
     """
     Extract CCD gain from FITS header.
 
-    Tries common gain keywords: GAIN, EGAIN, CCGAIN, CAMGAIN, CCDGAIN.
-
-    Parameters
-    ----------
-    header : dict
-        FITS header
-
-    Returns
-    -------
-    gain : float
-        CCD gain in e-/ADU (defaults to 1.0 if not found)
+    Tries GAIN, EGAIN, CCGAIN, CAMGAIN, CCDGAIN. Returns 1.0 if not found.
     """
     gain_keys = ["GAIN", "EGAIN", "CCGAIN", "CAMGAIN", "CCDGAIN"]
 
@@ -181,36 +128,10 @@ def get_ccd_gain(header: Dict[str, Any]) -> float:
 def export_lightcurve(
     output_path: str, times: np.ndarray, fluxes: np.ndarray, errors: np.ndarray, **metadata
 ):
-    """
-    Export light curve to CSV file.
-
-    Parameters
-    ----------
-    output_path : str
-        Path to output CSV file
-    times : np.ndarray
-        Observation times (MJD or BJD)
-    fluxes : np.ndarray
-        Relative flux values
-    errors : np.ndarray
-        Flux uncertainties
-    **metadata : dict
-        Additional columns to include (e.g., airmass, centroids)
-
-    Examples
-    --------
-    >>> export_lightcurve(
-    ...     'wasp75b_lightcurve.csv',
-    ...     times, fluxes, errors,
-    ...     airmass=airmass_values,
-    ...     x_centroid=x_positions
-    ... )
-    """
+    """Export light curve to CSV. Extra kwargs become additional columns."""
     import pandas as pd
 
     data = {"time_mjd": times, "flux_ratio": fluxes, "flux_error": errors}
-
-    # Add any extra columns
     data.update(metadata)
 
     df = pd.DataFrame(data)
@@ -221,26 +142,7 @@ def export_lightcurve(
 def export_fit_results(
     output_path: str, parameters: Dict[str, Tuple[float, float]], metadata: Dict[str, Any] = None
 ):
-    """
-    Export transit fit results to JSON.
-
-    Parameters
-    ----------
-    output_path : str
-        Path to output JSON file
-    parameters : dict
-        Dictionary of {param_name: (value, uncertainty)}
-    metadata : dict, optional
-        Additional information (e.g., target name, filters)
-
-    Examples
-    --------
-    >>> export_fit_results(
-    ...     'fit_results.json',
-    ...     {'rp_rs': (0.103, 0.002), 'a_rs': (7.2, 0.3)},
-    ...     metadata={'target': 'WASP-75b', 'filter': 'V'}
-    ... )
-    """
+    """Export transit fit results to JSON. *parameters* maps name → (value, uncertainty)."""
     import json
 
     output = {

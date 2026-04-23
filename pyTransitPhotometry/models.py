@@ -1,22 +1,4 @@
-"""
-Transit model fitting using batman.
-
-REFACTOR:
-  - Physical constants (G, R☉, R_Jup, AU) removed from inline code and
-    imported from the new ``constants`` module.
-  - Added ``_make_batman_params()`` — the single factory function that
-    constructs a ``batman.TransitParams`` object.  Avoids duplication if
-    future code paths need to create params without immediately calling
-    ``TransitModel``.
-  - Full PEP 484 / ``numpy.typing.NDArray`` type annotations on all public
-    symbols.
-  - Added ``# PERF:`` annotations on the two most expensive repeated
-    operations (batman model evaluation and full model rebuild per
-    curve_fit iteration).
-  - Docstrings now use NumPy format throughout.
-  - ``BATMAN_AVAILABLE`` guard unchanged; ``ImportError`` raised at the
-    call site, not at import time.
-"""
+"""Transit model fitting using batman."""
 
 import warnings
 from typing import Dict, Optional, Tuple
@@ -39,8 +21,6 @@ except ImportError:
     )
 
 
-# ── Batman parameter factory ───────────────────────────────────────────────────
-
 
 def _make_batman_params(
     t0: float,
@@ -54,39 +34,7 @@ def _make_batman_params(
     u2: float = 0.26,
     limb_dark: str = "quadratic",
 ) -> "batman.TransitParams":
-    """
-    Construct a ``batman.TransitParams`` object.
-
-    Single factory for all batman parameter creation.  Centralising this
-    prevents parameter-ordering bugs and makes unit-testing the parameter
-    setup independent of the light curve computation.
-
-    Parameters
-    ----------
-    t0 : float
-        Transit centre time (same units as *times* passed to the model).
-    period : float
-        Orbital period.
-    rp : float
-        Planet-to-star radius ratio (Rp/Rs).
-    a : float
-        Scaled semi-major axis (a/Rs).
-    inc : float
-        Orbital inclination in degrees.
-    ecc : float, optional
-        Eccentricity (default: 0.0).
-    w : float, optional
-        Argument of periastron in degrees (default: 90.0).
-    u1, u2 : float, optional
-        Quadratic limb-darkening coefficients (default: 0.4, 0.26).
-    limb_dark : str, optional
-        Limb-darkening law identifier (default: ``'quadratic'``).
-
-    Returns
-    -------
-    params : batman.TransitParams
-        Fully configured transit parameter object.
-    """
+    """Construct a ``batman.TransitParams`` object from named arguments."""
     params = batman.TransitParams()
     params.t0 = t0
     params.per = period
@@ -99,8 +47,6 @@ def _make_batman_params(
     params.limb_dark = limb_dark
     return params
 
-
-# ── Public model function ──────────────────────────────────────────────────────
 
 
 def batman_transit_model(
@@ -119,34 +65,6 @@ def batman_transit_model(
     """
     Generate a batman transit model light curve.
 
-    Parameters
-    ----------
-    times : NDArray[np.float64]
-        Observation times (MJD, BJD, or any consistent unit).
-    t0 : float
-        Transit centre time.
-    period : float
-        Orbital period (same units as *times*).
-    rp : float
-        Planet-to-star radius ratio (Rp/Rs).
-    a : float
-        Scaled semi-major axis (a/Rs).
-    inc : float
-        Orbital inclination in degrees.
-    ecc : float, optional
-        Orbital eccentricity (default: 0.0 — circular orbit).
-    w : float, optional
-        Argument of periastron in degrees (default: 90.0).
-    u1, u2 : float, optional
-        Quadratic limb-darkening coefficients (default: 0.4, 0.26).
-    limb_dark : str, optional
-        Limb-darkening law (default: ``'quadratic'``).
-
-    Returns
-    -------
-    model_flux : NDArray[np.float64]
-        Normalised transit light curve (1.0 out of transit).
-
     Raises
     ------
     ImportError
@@ -154,61 +72,26 @@ def batman_transit_model(
 
     Notes
     -----
-    Transit depth:       :math:`δ = (R_p/R_★)^2`
-    Impact parameter:    :math:`b = (a/R_★)\\cos i`
-
-    Uses batman (Kreidberg 2015) for fast, accurate limb-darkening integration.
-
-    Examples
-    --------
-    >>> model = batman_transit_model(
-    ...     times, t0=2460000.5, period=2.48, rp=0.103, a=7.2, inc=82.0
-    ... )
+    PERF: ``batman.TransitModel`` is rebuilt on every call. Inside
+    ``curve_fit`` (~10 000 evals) this may be significant — cache via
+    ``lru_cache`` on a hashable times key if profiling shows it matters.
     """
     if not BATMAN_AVAILABLE:
         raise ImportError("batman-package required. Install with: pip install batman-package")
 
-    # PERF: batman.TransitModel is constructed fresh on every call.  If this
-    # function is used inside a scipy curve_fit loop (~10 000 evaluations),
-    # profiling may show that repeated object construction is significant.
-    # Potential optimisation: cache the TransitModel when *times* is unchanged
-    # (e.g., via functools.lru_cache on a hashable times key).
     params = _make_batman_params(t0, period, rp, a, inc, ecc, w, u1, u2, limb_dark)
     m = batman.TransitModel(params, times)
     return m.light_curve(params)
-
-
-# ── Transit fitter ─────────────────────────────────────────────────────────────
 
 
 class TransitFitter:
     """
     Fit a batman transit model to a normalised light curve.
 
-    Parameters
-    ----------
-    period : float
-        Orbital period (fixed; days or same units as input times).
-    t0_guess : float
-        Initial guess for transit centre time.
-    limb_dark_u1 : float, optional
-        Quadratic limb-darkening coefficient u₁ (default: 0.40).
-    limb_dark_u2 : float, optional
-        Quadratic limb-darkening coefficient u₂ (default: 0.26).
-    ecc : float, optional
-        Orbital eccentricity (default: 0.0).
-    w : float, optional
-        Argument of periastron in degrees (default: 90.0).
-
     Raises
     ------
     ImportError
         If batman-package is not installed.
-
-    Examples
-    --------
-    >>> fitter = TransitFitter(period=2.4842, t0_guess=60969.25)
-    >>> result = fitter.fit(times, fluxes, errors)
     """
 
     def __init__(
@@ -230,7 +113,6 @@ class TransitFitter:
         self.ecc = ecc
         self.w = w
 
-    # ── Model wrappers ─────────────────────────────────────────────────────────
 
     def model_normalized(
         self,
@@ -240,30 +122,7 @@ class TransitFitter:
         a: float,
         inc: float,
     ) -> NDArray[np.float64]:
-        """
-        Pure batman transit model for data already normalised to ~1.0.
-
-        No baseline or slope parameters — they create degeneracy with
-        transit depth on already-normalised data.
-
-        Parameters
-        ----------
-        times : NDArray[np.float64]
-            Observation times.
-        t0 : float
-            Transit centre time (free parameter).
-        rp : float
-            Planet-to-star radius ratio.
-        a : float
-            Scaled semi-major axis (a/Rs).
-        inc : float
-            Orbital inclination in degrees.
-
-        Returns
-        -------
-        model_flux : NDArray[np.float64]
-            Normalised light curve.
-        """
+        """Pure batman transit model for data already normalised to ~1.0."""
         return batman_transit_model(
             times, t0, self.period, rp, a, inc,
             ecc=self.ecc, w=self.w,
@@ -281,32 +140,7 @@ class TransitFitter:
         t0: Optional[float] = None,
     ) -> NDArray[np.float64]:
         """
-        Transit model with linear detrending.
-
-        Model: ``F = baseline × transit(t) × (1 + slope × (t − t_mean))``.
-        Retained for use-cases where data is not pre-normalised.
-
-        Parameters
-        ----------
-        times : NDArray[np.float64]
-            Observation times.
-        rp : float
-            Rp/Rs.
-        a : float
-            a/Rs.
-        inc : float
-            Inclination in degrees.
-        baseline : float
-            Multiplicative baseline normalisation.
-        slope : float
-            Linear slope (flux / time_unit).
-        t0 : float, optional
-            Transit centre; defaults to ``self.t0_guess``.
-
-        Returns
-        -------
-        model_flux : NDArray[np.float64]
-            Transit model with linear trend applied.
+        Transit model with linear detrending: ``F = baseline × transit(t) × (1 + slope × (t − t_mean))``.
         """
         if t0 is None:
             t0 = self.t0_guess
@@ -319,30 +153,13 @@ class TransitFitter:
         return baseline * transit * (1.0 + slope * (times - t_mean))
 
     def _make_model_fixed_a(self, a_fixed: float) -> callable:
-        """
-        Return a 3-parameter model closure with a/Rs pinned to *a_fixed*.
-
-        Used when a/Rs is better constrained by spectroscopy than by
-        photometry — common for nearly-grazing transits where Rp/Rs, a/Rs,
-        and inclination are strongly degenerate.
-
-        Parameters
-        ----------
-        a_fixed : float
-            Fixed scaled semi-major axis (a/Rs).
-
-        Returns
-        -------
-        model : callable
-            ``f(times, t0, rp, inc) → NDArray[np.float64]``
-        """
+        """Return a 3-parameter model closure with a/Rs pinned to *a_fixed*."""
         def _model(
             times: NDArray[np.float64],
             t0: float,
             rp: float,
             inc: float,
         ) -> NDArray[np.float64]:
-            # PERF: same batman rebuild-per-call concern as batman_transit_model.
             return batman_transit_model(
                 times, t0, self.period, rp, a_fixed, inc,
                 ecc=self.ecc, w=self.w,
@@ -350,7 +167,6 @@ class TransitFitter:
             )
         return _model
 
-    # ── Main fit ───────────────────────────────────────────────────────────────
 
     def fit(
         self,
@@ -368,51 +184,23 @@ class TransitFitter:
 
         Parameters
         ----------
-        times : NDArray[np.float64]
-            Observation times.
-        fluxes : NDArray[np.float64]
-            Normalised flux measurements (~1.0 out of transit).
-        errors : NDArray[np.float64]
-            1-σ flux uncertainties.
-        initial_params : dict, optional
-            Initial guesses: ``{'rp': 0.10, 'a': 7.17, 'inc': 82.0}``.
-        bounds : dict, optional
-            Parameter bounds: ``{'rp': (0.05, 0.15), ...}``.
-        fix_t0 : bool, optional
-            Ignored (t0 is always a free parameter in this implementation).
-            Retained for API compatibility.
-        fix_a_rs : bool, optional
-            If True, fix a/Rs to ``initial_params['a']`` and fit only
-            3 parameters (t0, rp, inc).  Recommended for nearly-grazing
-            transits where the geometry is poorly constrained by photometry
-            alone (default: False).
-        maxfev : int, optional
-            Maximum function evaluations for ``curve_fit`` (default: 10000).
+        fix_a_rs : bool
+            Pin a/Rs to ``initial_params['a']`` and fit only (t0, rp, inc).
+            Recommended for nearly-grazing transits with degenerate geometry.
+        maxfev : int
+            Maximum ``curve_fit`` evaluations (default: 10000).
 
         Returns
         -------
         result : dict
-            Keys:
-
-            - ``'fitted_params'``: ``{name: (value, uncertainty)}``
-            - ``'t0'``: fitted transit centre
-            - ``'period'``: fixed orbital period
-            - ``'residuals'``: flux residuals
-            - ``'chi_squared'``: χ²
-            - ``'reduced_chi_squared'``: χ²_red
-            - ``'model_flux'``: best-fit model at *times*
-            - ``'covariance'``: parameter covariance matrix
-            - ``'hitting_bounds'``: list of parameters at their bound
+            Keys: ``'fitted_params'``, ``'t0'``, ``'period'``, ``'residuals'``,
+            ``'chi_squared'``, ``'reduced_chi_squared'``, ``'model_flux'``,
+            ``'covariance'``, ``'hitting_bounds'``.
 
         Raises
         ------
         RuntimeError
             If ``scipy.optimize.curve_fit`` fails to converge.
-
-        Notes
-        -----
-        Expects data already normalised to ~1.0 (use ``detrend_oot`` first).
-        Period and limb darkening are always fixed.
         """
         if initial_params is None:
             initial_params = {"rp": 0.103, "a": 7.17, "inc": 82.0}
@@ -504,7 +292,6 @@ class TransitFitter:
         rp_fit = fitted_params["rp"][0]
         a_fit = fitted_params["a"][0]
         inc_fit = fitted_params["inc"][0]
-        # PERF: one final batman model evaluation; not in a hot loop.
         model_flux = self.model_normalized(times, t0_fit, rp_fit, a_fit, inc_fit)
         residuals = fluxes - model_flux
 
@@ -512,7 +299,6 @@ class TransitFitter:
         n_params = len(param_names)
         reduced_chi_squared = chi_squared / (len(times) - n_params)
 
-        # Flag parameters at their bounds
         hitting_bounds: list = []
         for name, val, lo, hi in zip(param_names, popt, lower_bounds, upper_bounds):
             if abs(val - lo) < 0.01 * abs(hi - lo):
@@ -567,45 +353,25 @@ class TransitFitter:
 
         Parameters
         ----------
-        fit_result : dict
-            Output from :meth:`fit`.
         r_star_solar : float, optional
-            Stellar radius in solar radii, for physical unit conversions.
-        m_star_solar : float, optional
-            Stellar mass in solar masses (currently unused; reserved for
-            future dynamical consistency checks).
+            Stellar radius in solar radii; enables planet radius, semi-major
+            axis, and orbital velocity calculations.
 
         Returns
         -------
         derived : dict
-            Physical parameters (each value is a ``(value, uncertainty)``
-            tuple unless noted):
-
-            - ``'transit_depth_pct'``: :math:`(R_p/R_★)^2 × 100` (%)
-            - ``'impact_parameter'``: :math:`b = (a/R_★)\\cos i`
-            - ``'stellar_density_cgs'``: :math:`ρ_★` (g cm⁻³) from Kepler III
-            - ``'planet_radius_jupiter'``: :math:`R_p` (R_Jup) — if *r_star_solar* given
-            - ``'semi_major_axis_AU'``: :math:`a` (AU) — if *r_star_solar* given
-            - ``'orbital_velocity_kms'``: :math:`v_{orb}` (km s⁻¹) — if *r_star_solar* given
-
-        Notes
-        -----
-        Stellar density from photometry only (no mass required):
-
-        .. math::
-            ρ_★ = \\frac{3π}{G P^2}\\left(\\frac{a}{R_★}\\right)^3
-
-        Physical constants imported from :mod:`constants`.
+            ``{name: (value, uncertainty)}`` — keys: ``'transit_depth_pct'``,
+            ``'impact_parameter'``, ``'stellar_density_cgs'``, and optionally
+            ``'planet_radius_jupiter'``, ``'semi_major_axis_AU'``,
+            ``'orbital_velocity_kms'``.
         """
         rp, rp_err = fit_result["fitted_params"]["rp"]
         a, a_err = fit_result["fitted_params"]["a"]
         inc, inc_err = fit_result["fitted_params"]["inc"]
 
-        # Transit depth
         depth = rp**2
         depth_err = 2.0 * rp * rp_err
 
-        # Impact parameter
         inc_rad = np.deg2rad(inc)
         b = a * np.cos(inc_rad)
         b_err = np.sqrt(
@@ -613,8 +379,7 @@ class TransitFitter:
             + (a * np.sin(inc_rad) * np.deg2rad(inc_err)) ** 2
         )
 
-        # Stellar density from Kepler's third law (uses constants.py)
-        P_s = self.period * 86400.0  # days → seconds
+        P_s = self.period * 86400.0
         rho_star_SI = (3.0 * np.pi) / (G_SI * P_s**2) * a**3  # kg m⁻³
         rho_star_cgs = rho_star_SI * 1e-3  # kg m⁻³ → g cm⁻³
         rho_star_err = rho_star_cgs * 3.0 * (a_err / a) if a > 0 else 0.0
@@ -626,20 +391,17 @@ class TransitFitter:
         }
 
         if r_star_solar is not None:
-            R_star = r_star_solar * R_SUN_M  # metres
+            R_star = r_star_solar * R_SUN_M
 
-            # Planet radius
             Rp_jup = rp * R_star / R_JUP_M
             Rp_jup_err = rp_err * R_star / R_JUP_M
             derived["planet_radius_jupiter"] = (Rp_jup, Rp_jup_err)
 
-            # Semi-major axis
             a_AU = a * R_star / AU_M
             a_AU_err = a_err * R_star / AU_M
             derived["semi_major_axis_AU"] = (a_AU, a_AU_err)
 
-            # Orbital velocity
-            v_orb = 2.0 * np.pi * (a * R_star) / P_s / 1e3  # m/s → km/s
+            v_orb = 2.0 * np.pi * (a * R_star) / P_s / 1e3
             v_orb_err = 2.0 * np.pi * (a_err * R_star) / P_s / 1e3
             derived["orbital_velocity_kms"] = (v_orb, v_orb_err)
 

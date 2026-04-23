@@ -1,26 +1,4 @@
-"""
-Aperture photometry routines.
-
-REFACTOR:
-  - ``estimate_2d_background`` and ``build_epsf`` / ``run_psf_photometry``
-    have been extracted to the dedicated ``background`` and ``psf`` modules.
-    This module now has a single responsibility: aperture-based flux
-    measurement including centroid refinement.
-  - ``PhotometryConfig`` renamed to ``ApertureConfig`` to eliminate the name
-    collision with the ``PhotometryConfig`` dataclass in ``config.py``.
-    The pipeline imports it under the alias ``PhotConfig``, so the rename is
-    transparent to pipeline code.  External callers who imported
-    ``PhotometryConfig`` from this module should update to ``ApertureConfig``.
-  - Full PEP 484 / ``numpy.typing.NDArray`` type annotations.
-  - NumPy docstring format on every public symbol.
-
-Public API
-----------
-refine_centroid(image, initial_position, box_size, centroid_func)
-optimize_aperture_radius(image, position, radii, annulus_inner, annulus_outer, ...)
-measure_flux(image, position, aperture_radius, annulus_inner, annulus_outer, ...)
-ApertureConfig
-"""
+"""Aperture photometry routines."""
 
 import warnings
 from typing import Optional, Tuple
@@ -32,8 +10,6 @@ from photutils.centroids import centroid_2dg, centroid_com, centroid_sources
 from photutils.utils import calc_total_error
 
 
-# ── Centroid refinement ────────────────────────────────────────────────────────
-
 
 def refine_centroid(
     image: NDArray[np.float32],
@@ -42,42 +18,9 @@ def refine_centroid(
     centroid_func=centroid_2dg,
 ) -> Tuple[float, float]:
     """
-    Refine a star centroid using 2-D Gaussian fitting with a COM fallback.
+    Refine a star centroid; falls back to COM then initial position if fitting fails.
 
-    Parameters
-    ----------
-    image : NDArray[np.float32]
-        2-D science image.
-    initial_position : tuple of float
-        Initial (x, y) guess for the centroid position.
-    box_size : int, optional
-        Size of the cutout used for centroid fitting (default: 51).
-        Forced to the nearest odd integer if even.
-    centroid_func : callable, optional
-        photutils centroid function (default: ``centroid_2dg`` for 2-D
-        Gaussian).
-
-    Returns
-    -------
-    x_centroid : float
-        Refined x position.
-    y_centroid : float
-        Refined y position.
-
-    Notes
-    -----
-    The photutils ``centroid_2dg`` fitter emits an
-    ``AstropyUserWarning("fit may not have converged")`` for some frames.
-    This warning is suppressed inside the function; if the fitted position
-    is NaN or out-of-bounds the function falls back to centre-of-mass
-    (``centroid_com``), which always converges.  If that also fails the
-    original *initial_position* is returned unchanged.
-
-    Typical centroid precision: 0.01–0.1 pixels for bright, isolated stars.
-
-    Examples
-    --------
-    >>> x, y = refine_centroid(frame, (1028.3, 876.1), box_size=51)
+    Suppresses photutils convergence warnings internally.
     """
     x_init, y_init = initial_position
     if box_size % 2 == 0:
@@ -112,8 +55,6 @@ def refine_centroid(
         return x_init, y_init
 
 
-# ── Aperture optimisation ──────────────────────────────────────────────────────
-
 
 def optimize_aperture_radius(
     image: NDArray[np.float32],
@@ -129,46 +70,8 @@ def optimize_aperture_radius(
 
     Parameters
     ----------
-    image : NDArray[np.float32]
-        2-D science image.
-    position : tuple of float
-        Star centroid (x, y).
-    radii : NDArray[np.float64]
-        Candidate aperture radii to evaluate (e.g., ``np.arange(3, 20)``).
-    annulus_inner : float
-        Inner radius of the background annulus (pixels).
-    annulus_outer : float
-        Outer radius of the background annulus (pixels).
-    ccd_gain : float, optional
-        CCD gain in e⁻/ADU (default: 1.0).
-    return_snr_curve : bool, optional
-        If True, also return ``(radii, snr_values)`` (default: False).
-
-    Returns
-    -------
-    optimal_radius : float
-        Radius that maximises SNR.
-    (radii, snr_values) : tuple, optional
-        Full SNR curve if *return_snr_curve* is True.
-
-    Notes
-    -----
-    SNR model (CCD equation):
-
-    .. math::
-        \\text{SNR} = \\frac{S}{\\sqrt{S/g + N_{pix}\\,σ_{sky}^2}}
-
-    where :math:`S` is the net stellar signal, :math:`g` is the CCD gain,
-    and :math:`σ_{sky}` is the background standard deviation.
-
-    Typical optimal radius: 1–2 × FWHM.
-
-    Examples
-    --------
-    >>> r_opt = optimize_aperture_radius(
-    ...     frame, (1028, 876), np.arange(3, 20),
-    ...     annulus_inner=40, annulus_outer=60
-    ... )
+    return_snr_curve : bool
+        If True, also return ``(radii, snr_values)``.
     """
     bkg_annulus = CircularAnnulus(position, r_in=annulus_inner, r_out=annulus_outer)
     annulus_mask = bkg_annulus.to_mask(method="center")
@@ -201,8 +104,6 @@ def optimize_aperture_radius(
     return optimal_radius
 
 
-# ── Core flux measurement ──────────────────────────────────────────────────────
-
 
 def measure_flux(
     image: NDArray[np.float32],
@@ -214,57 +115,18 @@ def measure_flux(
     error_map: Optional[NDArray[np.float64]] = None,
 ) -> dict:
     """
-    Measure background-subtracted flux with full uncertainty propagation.
-
-    Parameters
-    ----------
-    image : NDArray[np.float32]
-        2-D science image.
-    position : tuple of float
-        Initial star centroid (x, y); refined internally via
-        :func:`refine_centroid`.
-    aperture_radius : float
-        Photometry aperture radius in pixels.
-    annulus_inner : float
-        Inner radius of the background annulus in pixels.
-    annulus_outer : float
-        Outer radius of the background annulus in pixels.
-    ccd_gain : float, optional
-        CCD gain in e⁻/ADU (default: 1.0).
-    error_map : NDArray[np.float64], optional
-        Pre-computed total error map from ``calc_total_error``.  Computed
-        internally if not supplied.
+    Measure background-subtracted flux with uncertainty propagation.
 
     Returns
     -------
     result : dict
-        Keys:
-
-        - ``'flux'`` — background-subtracted flux (ADU)
-        - ``'flux_err'`` — 1-σ flux uncertainty (ADU)
-        - ``'background_mean'`` — median sky background per pixel (ADU)
-        - ``'background_std'`` — standard deviation of sky background (ADU)
-        - ``'snr'`` — signal-to-noise ratio
-        - ``'aperture_sum'`` — raw aperture sum before background subtraction
-        - ``'centroid'`` — refined (x, y) centroid tuple
+        Keys: ``'flux'``, ``'flux_err'``, ``'background_mean'``,
+        ``'background_std'``, ``'snr'``, ``'aperture_sum'``, ``'centroid'``.
 
     Raises
     ------
     ValueError
         If the background annulus at *position* is empty.
-
-    Notes
-    -----
-    Background is estimated with the robust median (resistant to cosmic rays
-    and hot pixels within the annulus).
-
-    Examples
-    --------
-    >>> result = measure_flux(
-    ...     frame, (1028.3, 876.1),
-    ...     aperture_radius=6.0, annulus_inner=40, annulus_outer=60
-    ... )
-    >>> print(f"Flux: {result['flux']:.0f} ± {result['flux_err']:.0f}")
     """
     x_center, y_center = refine_centroid(image, position)
     refined_position = (x_center, y_center)
@@ -311,44 +173,9 @@ def measure_flux(
     }
 
 
-# ── Convenience wrapper ────────────────────────────────────────────────────────
-
 
 class ApertureConfig:
-    """
-    Convenience wrapper that bundles aperture geometry for repeated calls.
-
-    Previously named ``PhotometryConfig`` in this module.  Renamed to
-    ``ApertureConfig`` to avoid the name collision with the
-    ``PhotometryConfig`` dataclass in ``config.py``.  The pipeline already
-    imported this under the alias ``PhotConfig`` so the rename is
-    transparent there.
-
-    Parameters
-    ----------
-    aperture_radius : float
-        Photometry aperture radius in pixels.
-    annulus_inner : float
-        Inner radius of background annulus (must be > *aperture_radius*).
-    annulus_outer : float
-        Outer radius of background annulus (must be > *annulus_inner*).
-    ccd_gain : float, optional
-        CCD gain in e⁻/ADU (default: 1.0).
-    centroid_box_size : int, optional
-        Box size for centroid refinement (default: 51).
-
-    Raises
-    ------
-    ValueError
-        If the aperture / annulus geometry is invalid.
-
-    Examples
-    --------
-    >>> cfg = ApertureConfig(
-    ...     aperture_radius=6.0, annulus_inner=40.0, annulus_outer=60.0
-    ... )
-    >>> result = cfg.measure_flux(frame, (1028, 876))
-    """
+    """Bundles aperture geometry for repeated :func:`measure_flux` calls."""
 
     def __init__(
         self,
@@ -376,21 +203,7 @@ class ApertureConfig:
     def measure_flux(
         self, image: NDArray[np.float32], position: Tuple[float, float]
     ) -> dict:
-        """
-        Measure flux at *position* using this configuration.
-
-        Parameters
-        ----------
-        image : NDArray[np.float32]
-            2-D science image.
-        position : tuple of float
-            Initial (x, y) centroid guess.
-
-        Returns
-        -------
-        result : dict
-            See :func:`measure_flux`.
-        """
+        """Measure flux at *position* using this configuration."""
         return measure_flux(
             image,
             position,
@@ -408,6 +221,3 @@ class ApertureConfig:
         )
 
 
-# Backward-compatibility alias — old name still importable but deprecated.
-# DEAD CODE: remove in v2.0 once all callers have been updated.
-PhotometryConfig = ApertureConfig

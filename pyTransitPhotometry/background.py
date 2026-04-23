@@ -1,11 +1,4 @@
-"""
-Background estimation routines for CCD science images.
-
-Public API
-----------
-estimate_background(image, sample_size, method)
-estimate_2d_background(image, box_size, filter_size, sigma_clip_val, method)
-"""
+"""Sky background estimation routines."""
 
 import warnings
 from typing import Tuple
@@ -14,52 +7,23 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-# ── Simple corner / MAD estimator ─────────────────────────────────────────────
-
-
 def estimate_background(
     image: NDArray[np.float32],
     sample_size: int = 100,
     method: str = "corners",
 ) -> Tuple[float, float]:
     """
-    Estimate background level and noise from a 2-D science image.
-
-    A fast, assumption-light estimator suited for computing the background
-    standard deviation used by :func:`~detection.detect_sources` in
-    sigma-based threshold mode.  For spatially varying backgrounds use
-    :func:`estimate_2d_background` instead.
+    Estimate background (mean, std) from a 2-D image.
 
     Parameters
     ----------
-    image : NDArray[np.float32]
-        2-D science image array.
-    sample_size : int, optional
-        Number of pixels to sample along each edge for the ``'corners'``
-        method (default: 100).
-    method : str, optional
-        ``'corners'`` — samples four ``sample_size × sample_size`` corner
-        patches (fast, avoids stellar PSF halos near image centre).
-        ``'median'`` — uses global median absolute deviation, robust to
-        bright stars that cover a small fraction of the frame.
-
-    Returns
-    -------
-    background_mean : float
-        Estimated sky background level (ADU).
-    background_std : float
-        Estimated background standard deviation (ADU).
+    method : str
+        ``'corners'`` — four corner patches; ``'median'`` — global MAD estimate.
 
     Raises
     ------
     ValueError
-        If *method* is not ``'corners'`` or ``'median'``.
-
-    Examples
-    --------
-    >>> bg_mean, bg_std = estimate_background(image, sample_size=100)
-    >>> sources = detect_sources(image, threshold=5, threshold_type='sigma',
-    ...                          background_std=bg_std)
+        If image is not 2-D or *method* is unknown.
     """
     if image.ndim != 2:
         raise ValueError(f"Expected 2-D image, got shape {image.shape}")
@@ -86,8 +50,6 @@ def estimate_background(
         raise ValueError(f"Unknown method '{method}'. Choose 'corners' or 'median'.")
 
 
-# ── Spatially varying 2-D background ──────────────────────────────────────────
-
 
 def estimate_2d_background(
     image: NDArray[np.float32],
@@ -99,52 +61,21 @@ def estimate_2d_background(
     """
     Estimate a spatially varying 2-D background map.
 
-    Corrects for uneven illumination and atmospheric intensity gradients
-    across the detector—effects that a single scalar sky level cannot
-    capture.
-
     Parameters
     ----------
-    image : NDArray[np.float32]
-        2-D science image.
-    box_size : int, optional
-        Tile size (pixels) for the mesh-based ``'background2d'`` method
-        (default: 64).
-    filter_size : int, optional
-        Median filter window applied to the background mesh (default: 3).
-    sigma_clip_val : float, optional
-        Sigma threshold for masking stellar sources before background
-        estimation (default: 3.0).
-    method : str, optional
-        ``'background2d'`` — photutils mesh-based Background2D (default,
-        recommended).
-        ``'polynomial'`` — global third-order Polynomial2D fit; useful for
-        severe large-scale illumination gradients that exceed the tile size.
+    method : str
+        ``'background2d'`` — photutils mesh-based Background2D (default).
+        ``'polynomial'`` — global 3rd-order Polynomial2D fit.
 
     Returns
     -------
-    background : NDArray[np.float32]
-        2-D background map, same shape as *image*.
-    background_rms : NDArray[np.float32]
-        2-D map of background RMS noise.
+    background, background_rms : NDArray[np.float32]
+        2-D maps, same shape as *image*.
 
     Raises
     ------
     ValueError
-        If *method* is not ``'background2d'`` or ``'polynomial'``.
-
-    Notes
-    -----
-    The mesh-based ``'background2d'`` method tiles the image into
-    ``box_size × box_size`` cells, estimates the sky in each cell with a
-    sigma-clipped median, and interpolates to produce a smooth map.  The
-    polynomial method fits a degree-3 2-D polynomial to sigma-clipped
-    background pixels — best for frames with severe atmospheric gradients.
-
-    Examples
-    --------
-    >>> bkg, bkg_rms = estimate_2d_background(frame, box_size=64)
-    >>> sky_subtracted = frame - bkg
+        If *method* is unknown.
     """
     if method == "background2d":
         from astropy.stats import SigmaClip
@@ -170,7 +101,7 @@ def estimate_2d_background(
         clipped = astropy_sigma_clip(image, sigma=sigma_clip_val, maxiters=5, masked=True)
         valid = ~clipped.mask
 
-        # PERF: downsample to reduce the number of points passed to the fitter
+        # PERF: downsample to reduce fitter load
         step = max(1, min(image.shape) // 64)
         x_ds = x_idx[::step, ::step][valid[::step, ::step]].ravel()
         y_ds = y_idx[::step, ::step][valid[::step, ::step]].ravel()

@@ -32,50 +32,14 @@ from .models import TransitFitter
 
 
 class TransitPipeline:
-    """
-    Complete transit photometry pipeline.
-
-    This class coordinates all stages of the analysis:
-    1. Load and calibrate CCD frames
-    2. Detect stars
-    3. Extract aperture photometry
-    4. Build differential light curve
-    5. Detrend and remove outliers
-    6. Fit transit model
-    7. Export results
-
-    Parameters
-    ----------
-    config : PipelineConfig
-        Pipeline configuration object
-
-    Examples
-    --------
-    >>> from transitphotometry import TransitPipeline, PipelineConfig
-    >>>
-    >>> # Load configuration
-    >>> config = PipelineConfig.from_yaml('config.yaml')
-    >>>
-    >>> # Create and run pipeline
-    >>> pipeline = TransitPipeline(config)
-    >>> results = pipeline.run()
-    >>>
-    >>> # Or run stages individually
-    >>> pipeline.run_calibration()
-    >>> pipeline.run_detection()
-    >>> pipeline.run_photometry()
-    >>> pipeline.run_detrending()
-    >>> pipeline.run_transit_fit()
-    """
+    """Complete transit photometry pipeline."""
 
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.config.validate()
 
-        # Create output directory
         Path(config.paths.output_dir).mkdir(parents=True, exist_ok=True)
 
-        # Storage for intermediate results
         self.calibration_frames = None
         self.science_data = None
         self.headers = None
@@ -91,23 +55,7 @@ class TransitPipeline:
         self.config.summary()
 
     def run(self) -> Dict:
-        """
-        Run complete pipeline from start to finish.
-
-        Returns
-        -------
-        results : dict
-            Complete analysis results including:
-            - lightcurve: raw differential photometry
-            - detrended_lc: cleaned light curve
-            - fit_result: transit model fit parameters
-            - derived_params: physical parameters
-
-        Examples
-        --------
-        >>> results = pipeline.run()
-        >>> print(f"Transit depth: {results['derived_params']['transit_depth_pct']}")
-        """
+        """Run all stages and return results dict."""
         print("\n" + "=" * 70)
         print("STARTING FULL PIPELINE EXECUTION")
         print("=" * 70 + "\n")
@@ -217,17 +165,11 @@ class TransitPipeline:
         print(f"✓ Calibration complete: {len(self.calibrated_images)} frames")
 
     def run_detection(self):
-        """Stage 2: Detect sources in frame 0, then track via centroid refinement.
+        """
+        Stage 2: Detect sources in frame 0, then track centroids across frames.
 
-        Running DAOStarFinder independently on every frame is unreliable: the
-        brightness-sorted order of detected stars can change between frames if
-        transparency varies, so ``sources[2]`` in frame 50 may not be the same
-        star as ``sources[2]`` in frame 0.  Instead we:
-        1. Run detection only on the first calibrated frame.
-        2. For every subsequent frame, refine each star's centroid using 2-D
-           Gaussian fitting around its previous position.
-        This guarantees that index ``i`` always refers to the same physical star
-        for the entire observation.
+        Detection runs once on frame 0 via DAOStarFinder; subsequent frames use
+        centroid refinement to guarantee consistent star indexing across all frames.
         """
         if self.calibrated_images is None:
             raise RuntimeError("Must run calibration first")
@@ -236,7 +178,6 @@ class TransitPipeline:
 
         self.sources_list = []
 
-        # ── Frame 0: full DAOStarFinder detection ─────────────────────────────
         first_frame = self.calibrated_images[0]
         sources_0 = detect_sources(
             first_frame,
@@ -253,7 +194,6 @@ class TransitPipeline:
         )
         self.sources_list.append(sources_0)
 
-        # ── Frames 1..N: centroid tracking ────────────────────────────────────
         n_stars = len(sources_0)
         print(
             f"Tracking {n_stars} stars across "
@@ -271,12 +211,10 @@ class TransitPipeline:
                 try:
                     x_new, y_new = refine_centroid(frame, (x_prev, y_prev), box_size=51)
                 except Exception:
-                    # Fall back to last known position
                     x_new, y_new = x_prev, y_prev
                 new_x.append(x_new)
                 new_y.append(y_new)
 
-            # Build a source table with tracked positions, keeping frame-0 metadata
             tracked = sources_0.copy()
             tracked["x_centroid"] = new_x
             tracked["y_centroid"] = new_y
@@ -303,7 +241,6 @@ class TransitPipeline:
         phot_method = self.config.photometry.method
         bkg_method = self.config.photometry.background_method
 
-        # ── 2D background estimation (used by both modes if not 'annulus') ────
         background_maps = None
         if bkg_method in ("background2d", "polynomial"):
             print(f"Estimating 2D backgrounds ({bkg_method})...")
@@ -317,7 +254,6 @@ class TransitPipeline:
                 )
                 background_maps.append(bkg)
 
-        # ── PSF photometry branch ─────────────────────────────────────────────
         if phot_method == "psf":
             print("Building empirical PSF from first frame...")
             first_frame = self.calibrated_images[0]
@@ -372,7 +308,6 @@ class TransitPipeline:
                     "centroid": (r["x_fit"], r["y_fit"]),
                 }
 
-        # ── Aperture photometry branch ────────────────────────────────────────
         else:
             if self.config.photometry.optimize_aperture:
                 print("Optimizing aperture radius...")
@@ -402,10 +337,8 @@ class TransitPipeline:
 
             def photometry_func(image, star_idx):
                 frame_idx = getattr(photometry_func, "_frame_idx", 0)
-                # Use per-frame source positions to track star drift across the observation
                 sources = self.sources_list[frame_idx]
                 position = (sources["x_centroid"][star_idx], sources["y_centroid"][star_idx])
-                # Optionally subtract 2D background before aperture phot
                 img_work = image
                 if background_maps is not None:
                     img_work = image - background_maps[frame_idx]
@@ -418,9 +351,8 @@ class TransitPipeline:
                     phot_config.ccd_gain,
                 )
 
-        # ── Build differential light curve ────────────────────────────────────
         times = extract_header_value(self.headers, "JD-HELIO", default=0.0)
-        times = times - 2400000.5  # Convert to MJD
+        times = times - 2400000.5
 
         def time_extractor(frame_idx):
             return times[frame_idx]
@@ -446,12 +378,7 @@ class TransitPipeline:
         print(f"\n✓ Light curve extracted: {len(self.lightcurve['times'])} points")
 
     def run_detrending(self):
-        """Stage 4: Detrend light curve and remove outliers.
-
-        Uses OOT-only (out-of-transit) linear detrending so the transit dip is
-        never used when fitting the baseline trend.  The data are normalised to
-        ~1.0 afterwards, which makes the subsequent transit fit well-conditioned.
-        """
+        """Stage 4: OOT-only linear detrend, normalise to ~1.0, sigma-clip."""
         if self.lightcurve is None:
             raise RuntimeError("Must run photometry first")
 
@@ -469,17 +396,10 @@ class TransitPipeline:
         print(f"\n✓ Detrending complete: {len(self.detrended_lc['times'])} points")
 
     def run_transit_fit(self):
-        """Stage 5: Fit transit model to detrended, normalised light curve.
-
-        Data from ``detrend_oot`` is already normalised to ~1.0, so only four
-        physical parameters need to be fitted: t0, rp, a, inc.  The old
-        ``baseline`` and ``slope`` free parameters have been removed — they
-        created degeneracy with the transit depth and destabilised the fit.
-        """
+        """Stage 5: Fit transit model to detrended, normalised light curve."""
         if self.detrended_lc is None:
             raise RuntimeError("Must run detrending first")
 
-        # Create fitter
         fitter = TransitFitter(
             period=self.config.transit_model.period,
             t0_guess=self.config.transit_model.t0_guess,
@@ -489,7 +409,6 @@ class TransitPipeline:
             w=self.config.transit_model.omega,
         )
 
-        # 4 free parameters only — data is already normalised to ~1.0
         initial_params = {
             "rp": self.config.transit_model.rp_guess,
             "a": self.config.transit_model.a_guess,
@@ -508,7 +427,6 @@ class TransitPipeline:
             ),
         }
 
-        # Fit — t0 is always free; baseline/slope removed (data already normalised)
         self.fit_result = fitter.fit(
             self.detrended_lc["times"],
             self.detrended_lc["fluxes"],
@@ -518,7 +436,6 @@ class TransitPipeline:
             fix_a_rs=self.config.transit_model.fix_a_rs,
         )
 
-        # Derive physical parameters
         self.fit_result["derived_params"] = fitter.derive_physical_params(
             self.fit_result,
             r_star_solar=self.config.transit_model.r_star_solar,
@@ -528,10 +445,9 @@ class TransitPipeline:
         print("\n✓ Transit fit complete")
 
     def export_results(self):
-        """Stage 6: Export light curves and fit results."""
+        """Stage 6: Write light curves and fit results to output directory."""
         output_dir = Path(self.config.paths.output_dir)
 
-        # Export raw light curve
         if self.lightcurve is not None:
             export_lightcurve(
                 str(output_dir / "lightcurve_raw.csv"),
@@ -540,7 +456,6 @@ class TransitPipeline:
                 self.lightcurve["errors"],
             )
 
-        # Export detrended light curve
         if self.detrended_lc is not None:
             export_lightcurve(
                 str(output_dir / "lightcurve_detrended.csv"),
@@ -549,7 +464,6 @@ class TransitPipeline:
                 self.detrended_lc["errors"],
             )
 
-        # Export fit results
         if self.fit_result is not None:
             fit_params = self.fit_result["fitted_params"].copy()
             fit_params.update(self.fit_result["derived_params"])
@@ -567,7 +481,6 @@ class TransitPipeline:
                 },
             )
 
-        # Save configuration used
         self.config.to_yaml(str(output_dir / "config_used.yaml"))
 
         print(f"\n✓ Results exported to {output_dir}")

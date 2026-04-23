@@ -163,23 +163,7 @@ class PipelineConfig:
 
     @classmethod
     def from_yaml(cls, filepath: str) -> "PipelineConfig":
-        """
-        Load configuration from YAML file.
-
-        Parameters
-        ----------
-        filepath : str
-            Path to YAML configuration file
-
-        Returns
-        -------
-        config : PipelineConfig
-            Loaded configuration
-
-        Examples
-        --------
-        >>> config = PipelineConfig.from_yaml('config.yaml')
-        """
+        """Load configuration from a YAML file."""
         with open(filepath, "r") as f:
             data = yaml.safe_load(f)
 
@@ -208,18 +192,7 @@ class PipelineConfig:
         )
 
     def to_yaml(self, filepath: str):
-        """
-        Save configuration to YAML file.
-
-        Parameters
-        ----------
-        filepath : str
-            Output path for YAML file
-
-        Examples
-        --------
-        >>> config.to_yaml('config_output.yaml')
-        """
+        """Save configuration to a YAML file."""
         # Convert to nested dict
         data = {
             "paths": asdict(self.paths),
@@ -241,14 +214,7 @@ class PipelineConfig:
         print(f"✓ Configuration saved to {filepath}")
 
     def validate(self):
-        """
-        Validate configuration for consistency.
-
-        Raises
-        ------
-        ValueError
-            If configuration is invalid
-        """
+        """Validate configuration; raises ValueError on invalid geometry or indices."""
         # Check paths exist
         for dir_name in ["data_dir", "bias_dir", "dark_dir", "flat_dir"]:
             dir_path = getattr(self.paths, dir_name)
@@ -317,19 +283,7 @@ class PipelineConfig:
 
 
 def create_example_config(output_path: str = "config_example.yaml"):
-    """
-    Create an example configuration file.
-
-    Parameters
-    ----------
-    output_path : str
-        Path for output YAML file
-
-    Examples
-    --------
-    >>> create_example_config('my_config.yaml')
-    >>> config = PipelineConfig.from_yaml('my_config.yaml')
-    """
+    """Create an example configuration YAML at *output_path*."""
     example_config = PipelineConfig(
         paths=PathConfig(
             data_dir="./Group8.nosync/data",

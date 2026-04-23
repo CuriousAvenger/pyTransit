@@ -18,25 +18,9 @@ def plot_calibration_comparison(
     figsize: Tuple[int, int] = (14, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Compare raw and calibrated images side-by-side.
-
-    Parameters
-    ----------
-    raw_image : np.ndarray
-        Raw uncalibrated image
-    calibrated_image : np.ndarray
-        Calibrated image
-    vmin, vmax : float
-        Display range for LogNorm
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Compare raw and calibrated images side-by-side."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Raw image
     im0 = axes[0].imshow(
         raw_image, cmap="viridis", origin="lower", norm=LogNorm(vmin=vmin, vmax=vmax)
     )
@@ -45,7 +29,6 @@ def plot_calibration_comparison(
     axes[0].set_ylabel("Y (pixels)", fontsize=11)
     plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04, label="Counts")
 
-    # Calibrated image
     im1 = axes[1].imshow(
         calibrated_image, cmap="viridis", origin="lower", norm=LogNorm(vmin=vmin, vmax=vmax)
     )
@@ -73,24 +56,7 @@ def plot_detected_sources(
     figsize: Tuple[int, int] = (12, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Plot detected sources with target and references highlighted.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Calibrated image
-    sources : astropy.table.Table
-        Detected sources
-    target_index : int, optional
-        Index of target star
-    reference_indices : list, optional
-        Indices of reference stars
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Plot detected sources with target and references highlighted."""
     from photutils.aperture import CircularAperture
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -101,7 +67,6 @@ def plot_detected_sources(
     im = ax.imshow(image, norm=LogNorm(vmin=700, vmax=1400), cmap="viridis", origin="lower")
     apertures.plot(color="yellow", lw=1.5, alpha=0.5, ax=ax)
 
-    # Highlight target and references
     if target_index is not None:
         ax.plot(
             sources["x_centroid"][target_index],
@@ -148,26 +113,7 @@ def plot_lightcurve(
     figsize: Tuple[int, int] = (12, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Plot light curve with error bars.
-
-    Parameters
-    ----------
-    times : np.ndarray
-        Observation times
-    fluxes : np.ndarray
-        Flux measurements
-    errors : np.ndarray
-        Flux uncertainties
-    title : str
-        Plot title
-    xlabel, ylabel : str
-        Axis labels
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Plot light curve with error bars and statistics box."""
     fig, ax = plt.subplots(figsize=figsize)
 
     ax.errorbar(
@@ -195,7 +141,6 @@ def plot_lightcurve(
     ax.legend(fontsize=11, loc="best", framealpha=0.9)
     ax.grid(True, alpha=0.3, linestyle=":", linewidth=1)
 
-    # Statistics box
     textstr = f"Data points: {len(times)}\n"
     textstr += f"Time span: {(times.max()-times.min())*24:.1f} hours\n"
     textstr += f"Mean flux: {np.mean(fluxes):.6f}\n"
@@ -233,33 +178,9 @@ def plot_transit_fit(
     figsize: Tuple[int, int] = (16, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Plot transit fit with data, model, and residuals.
-
-    Parameters
-    ----------
-    times : np.ndarray
-        Data times
-    fluxes : np.ndarray
-        Data fluxes
-    errors : np.ndarray
-        Data errors
-    model_times : np.ndarray
-        Model evaluation times
-    model_fluxes : np.ndarray
-        Model fluxes
-    residuals : np.ndarray
-        Fit residuals
-    fit_params : dict
-        Fitted parameters
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Plot transit fit with data, model, and residuals side-by-side."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Left: Data + model
     ax = axes[0]
     ax.errorbar(
         times, fluxes, yerr=errors, fmt="o", capsize=2, alpha=0.6, color="dodgerblue", label="Data"
@@ -280,7 +201,6 @@ def plot_transit_fit(
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Right: Residuals
     ax = axes[1]
     ax.errorbar(times, residuals, yerr=errors, fmt="o", capsize=2, alpha=0.6, color="dodgerblue")
     ax.axhline(y=0, color="r", linestyle="--", lw=2)
@@ -306,31 +226,12 @@ def plot_airmass_correlation(
     figsize: Tuple[int, int] = (16, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Plot airmass vs flux correlation and time evolution.
-
-    Parameters
-    ----------
-    airmass : np.ndarray
-        Airmass values
-    fluxes : np.ndarray
-        Flux measurements
-    times : np.ndarray
-        Observation times
-    correlation : float
-        Pearson correlation coefficient
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Plot airmass vs flux correlation and time evolution."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Left: Airmass vs flux
     ax = axes[0]
     ax.scatter(airmass, fluxes, alpha=0.6, s=30, c="coral")
 
-    # Fit line
     coeffs = np.polyfit(airmass, fluxes, 1)
     ax.plot(airmass, np.polyval(coeffs, airmass), "r--", lw=2, label=f"r={correlation:.3f}")
 
@@ -340,7 +241,6 @@ def plot_airmass_correlation(
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Right: Time evolution
     ax = axes[1]
     ax.plot(times, fluxes, "o-", alpha=0.6, color="dodgerblue", markersize=4)
     ax.set_xlabel("Time (MJD)", fontsize=12, weight="bold")
@@ -375,25 +275,9 @@ def plot_sigma_clipping(
     figsize: Tuple[int, int] = (16, 6),
     save_path: Optional[str] = None,
 ):
-    """
-    Show before/after sigma clipping comparison.
-
-    Parameters
-    ----------
-    times_before, fluxes_before, errors_before : np.ndarray
-        Data before clipping
-    times_after, fluxes_after, errors_after : np.ndarray
-        Data after clipping
-    sigma_threshold : float
-        Sigma threshold used
-    figsize : tuple
-        Figure size
-    save_path : str, optional
-        Save figure to path
-    """
+    """Show before/after sigma-clipping comparison."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Before clipping
     ax = axes[0]
     ax.errorbar(
         times_before,
@@ -415,7 +299,6 @@ def plot_sigma_clipping(
     ax.set_title(f"Before Clipping ({len(times_before)} points)", fontsize=12, weight="bold")
     ax.grid(True, alpha=0.3)
 
-    # After clipping
     ax = axes[1]
     ax.errorbar(
         times_after,
