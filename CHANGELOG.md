@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `pyTransitPhotometry` are documented here.
+All notable changes to `pyTransit` are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/) and the format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
@@ -14,7 +14,7 @@ This project follows [Semantic Versioning](https://semver.org/) and the format f
 
 ### Added
 
-- **PSF fitting photometry** (`pyTransitPhotometry.photometry`): empirical PSF construction via `photutils.psf.EPSFBuilder` and simultaneous source fitting via `PSFPhotometry`, replacing classical circular aperture photometry as the default for crowded fields.
+- **PSF fitting photometry** (`pyTransit.photometry`): empirical PSF construction via `photutils.psf.EPSFBuilder` and simultaneous source fitting via `PSFPhotometry`, replacing classical circular aperture photometry as the default for crowded fields.
 - **2D background estimation** (`estimate_2d_background`): mesh-based `Background2D` and third-order `Polynomial2D` methods, selectable via `config.photometry.background_method`.
 - **Rolling-window MAD outlier filter** (`rolling_mad_filter`): local median absolute deviation rejection that protects transit ingress/egress from aggressive global clipping.
 - **Isolation Forest anomaly detector** (`isolation_forest_filter`): scikit-learn `IsolationForest` trained on time/flux/gradient feature space for non-Gaussian noise patterns.
@@ -55,6 +55,6 @@ This project follows [Semantic Versioning](https://semver.org/) and the format f
 
 ---
 
-[Unreleased]: https://github.com/CuriousAvenger/pyTransitPhotometry/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/CuriousAvenger/pyTransitPhotometry/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/CuriousAvenger/pyTransitPhotometry/releases/tag/v1.0.0
+[Unreleased]: https://github.com/CuriousAvenger/pyTransit/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/CuriousAvenger/pyTransit/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/CuriousAvenger/pyTransit/releases/tag/v1.0.0

@@ -30,7 +30,7 @@ pytest tests/ -v
 ## Checklist
 
 - [ ] Tests pass locally (`pytest tests/`)
-- [ ] Code is formatted (`black pyTransitPhotometry/ tests/`)
-- [ ] Linting passes (`flake8 pyTransitPhotometry/ tests/ --max-line-length=100`)
+- [ ] Code is formatted (`black pyTransit/ tests/`)
+- [ ] Linting passes (`flake8 pyTransit/ tests/ --max-line-length=100`)
 - [ ] `CHANGELOG.md` updated under `[Unreleased]`
 - [ ] Docstrings added/updated for new public functions

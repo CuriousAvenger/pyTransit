@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pytransitphotometry"
+name = "pytransit"
 version = "1.1.0"
 description = "Automated, config-driven pipeline for ground-based exoplanet transit photometry"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Sai Praneth", email = "" }
+    { name = "Sai Praneth", email = "sai@example.com" }
 ]
 keywords = [
     "astronomy",
@@ -55,21 +55,21 @@ dev = [
 ]
 
 [project.scripts]
-pytransit = "pyTransitPhotometry.cli:main"
+pytransit = "pyTransit.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/CuriousAvenger/pyTransitPhotometry"
-Repository = "https://github.com/CuriousAvenger/pyTransitPhotometry"
-"Bug Tracker" = "https://github.com/CuriousAvenger/pyTransitPhotometry/issues"
-Changelog = "https://github.com/CuriousAvenger/pyTransitPhotometry/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/CuriousAvenger/pyTransitPhotometry/tree/main/docs"
+Homepage = "https://github.com/CuriousAvenger/pyTransit"
+Repository = "https://github.com/CuriousAvenger/pyTransit"
+"Bug Tracker" = "https://github.com/CuriousAvenger/pyTransit/issues"
+Changelog = "https://github.com/CuriousAvenger/pyTransit/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/CuriousAvenger/pyTransit/tree/main/docs"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pyTransitPhotometry*"]
+include = ["pyTransit*"]
 
 [tool.setuptools.package-data]
-pyTransitPhotometry = ["*.yaml"]
+pyTransit = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

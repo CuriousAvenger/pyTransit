@@ -1,6 +1,6 @@
 # API Reference
 
-**Complete Function and Class Documentation for pyTransitPhotometry**
+**Complete Function and Class Documentation for pyTransit**
 
 ---
 

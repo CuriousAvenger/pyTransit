@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a reproducible defect in pyTransitPhotometry
+about: Report a reproducible defect in pyTransit
 title: "[BUG] "
 labels: bug
 assignees: CuriousAvenger
@@ -30,7 +30,7 @@ What actually happened. Include the full traceback if applicable.
 |------|---------|
 | OS | e.g. macOS 14.4 |
 | Python | e.g. 3.11.3 |
-| pyTransitPhotometry | e.g. 1.1.0 |
+| pyTransit | e.g. 1.1.0 |
 | photutils | e.g. 3.0.0 |
 | astropy | e.g. 6.0.1 |
 | batman-package | e.g. 2.5.3 |

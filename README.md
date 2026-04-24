@@ -1,6 +1,6 @@
-# pyTransitPhotometry
+# pyTransit
 
-[![CI](https://github.com/CuriousAvenger/pyTransitPhotometry/actions/workflows/ci.yml/badge.svg)](https://github.com/CuriousAvenger/pyTransitPhotometry/actions/workflows/ci.yml)
+[![CI](https://github.com/CuriousAvenger/pyTransit/actions/workflows/ci.yml/badge.svg)](https://github.com/CuriousAvenger/pyTransit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![DOI](https://joss.theoj.org/papers/placeholder/status.svg)](https://joss.theoj.org)
@@ -11,7 +11,7 @@ An automated, config-driven Python library for ground-based exoplanet transit ph
 
 ## Overview
 
-Ground-based transit photometry is affected by three systematic error sources that degrade the precision of recovered planetary parameters: flux dilution from blended background stars, atmospheric scintillation and tracking drift spikes, and extinction bias from airmass gradients. `pyTransitPhotometry` addresses all three within a single, documented, tested pipeline governed by a versioned YAML configuration file.
+Ground-based transit photometry is affected by three systematic error sources that degrade the precision of recovered planetary parameters: flux dilution from blended background stars, atmospheric scintillation and tracking drift spikes, and extinction bias from airmass gradients. `pyTransit` addresses all three within a single, documented, tested pipeline governed by a versioned YAML configuration file.
 
 **Pipeline stages:**
 
@@ -42,8 +42,8 @@ Raw FITS frames
 ### From source (recommended during active development)
 
 ```bash
-git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
-cd pyTransitPhotometry
+git clone https://github.com/CuriousAvenger/pyTransit.git
+cd pyTransit
 pip install -e .
 ```
 
@@ -75,7 +75,7 @@ cp examples/config_example.yaml my_transit.yaml
 ### 2. Run the complete pipeline
 
 ```python
-from pyTransitPhotometry import TransitPipeline, PipelineConfig
+from pyTransit import TransitPipeline, PipelineConfig
 
 config = PipelineConfig.from_yaml("my_transit.yaml")
 pipeline = TransitPipeline(config)
@@ -163,7 +163,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 
 # With coverage
-pytest tests/ --cov=pyTransitPhotometry --cov-report=term-missing
+pytest tests/ --cov=pyTransit --cov-report=term-missing
 ```
 
 All 36 tests cover: CCD calibration, 2D background estimation, aperture photometry, sigma-clipping, rolling MAD, Isolation Forest, Huber airmass detrending, and transit parameter injection–recovery.
@@ -178,16 +178,16 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. In
 4. Update `CHANGELOG.md` under `[Unreleased]`.
 5. Open a pull request describing the motivation and changes.
 
-Bug reports and feature requests are welcome via [GitHub Issues](https://github.com/CuriousAvenger/pyTransitPhotometry/issues). Use the provided templates.
+Bug reports and feature requests are welcome via [GitHub Issues](https://github.com/CuriousAvenger/pyTransit/issues). Use the provided templates.
 
 ## Citation
 
-If you use `pyTransitPhotometry` in your research, please cite the JOSS paper (pending):
+If you use `pyTransit` in your research, please cite the JOSS paper (pending):
 
 ```bibtex
 @article{praneth2026,
   author  = {Praneth, Sai},
-  title   = {pyTransitPhotometry: An Automated, Config-Driven Pipeline
+  title   = {pyTransit: An Automated, Config-Driven Pipeline
              for Ground-Based Exoplanet Transit Photometry},
   journal = {Journal of Open Source Software},
   year    = {2026},
@@ -197,5 +197,5 @@ If you use `pyTransitPhotometry` in your research, please cite the JOSS paper (p
 
 ## License
 
-`pyTransitPhotometry` is released under the [MIT License](LICENSE).
+`pyTransit` is released under the [MIT License](LICENSE).
 

@@ -32,7 +32,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run test suite
-        run: pytest tests/ -v --tb=short --cov=pyTransitPhotometry --cov-report=xml
+        run: pytest tests/ -v --tb=short --cov=pyTransit --cov-report=xml
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -50,5 +50,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install black flake8
-      - run: black --check --diff pyTransitPhotometry/ tests/
-      - run: flake8 pyTransitPhotometry/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+      - run: black --check --diff pyTransit/ tests/
+      - run: flake8 pyTransit/ tests/ --max-line-length=100 --extend-ignore=E203,W503

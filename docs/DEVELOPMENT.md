@@ -1,6 +1,6 @@
 # Development Guide
 
-**Extensibility, Testing, and Contribution Guidelines for pyTransitPhotometry**
+**Extensibility, Testing, and Contribution Guidelines for pyTransit**
 
 ---
 
@@ -29,7 +29,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
+git clone https://github.com/CuriousAvenger/pyTransit.git
 cd pytransitphotometry
 
 # Create development environment
@@ -53,7 +53,7 @@ Installed via `pip install -e ".[dev]"`:
 
 ```
 pytransitphotometry/
-├── pyTransitPhotometry/       # Main package
+├── pyTransit/       # Main package
 │   ├── __init__.py
 │   ├── pipeline.py
 │   ├── config.py
@@ -1079,7 +1079,7 @@ Open GitHub issue with:
    - What actually happened
    - Minimal reproducible example
 3. **Environment**:
-   - pyTransitPhotometry version
+   - pyTransit version
    - Python version
    - OS (macOS, Linux, Windows)
 4. **Attachments**:

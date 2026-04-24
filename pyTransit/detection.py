@@ -74,6 +74,6 @@ def select_reference_stars(sources: Table, target_index: int, n_references: int=
     return (target_position, reference_positions, reference_indices)
 
 def estimate_background(image: NDArray[np.float32], sample_size: int=100, method: str='corners'):
-    warnings.warn('estimate_background has moved to pyTransitPhotometry.background. Update your import to: from pyTransitPhotometry.background import estimate_background', DeprecationWarning, stacklevel=2)
+    warnings.warn('estimate_background has moved to pyTransit.background. Update your import to: from pyTransit.background import estimate_background', DeprecationWarning, stacklevel=2)
     from .background import estimate_background as _impl
     return _impl(image, sample_size=sample_size, method=method)

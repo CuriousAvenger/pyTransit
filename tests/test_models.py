@@ -30,7 +30,7 @@ class TestTransitInjectionRecovery:
         return (times, flux_noisy, errors)
 
     def _make_fitter(self):
-        from pyTransitPhotometry.models import TransitFitter
+        from pyTransit.models import TransitFitter
         truth = self.TRUTH
         return TransitFitter(period=truth['period'], t0_guess=truth['t0'], limb_dark_u1=truth['u1'], limb_dark_u2=truth['u2'])
 

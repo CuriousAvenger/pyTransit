@@ -12,7 +12,7 @@ class TestSigmaClip:
         return (times, fluxes, errors)
 
     def test_removes_spikes(self, clean_lc):
-        from pyTransitPhotometry.detrending import sigma_clip
+        from pyTransit.detrending import sigma_clip
         times, fluxes, errors = clean_lc
         fluxes_spiked = fluxes.copy()
         spike_idx = [10, 75, 140]
@@ -22,14 +22,14 @@ class TestSigmaClip:
             assert not mask[idx], f'Spike at index {idx} should be rejected'
 
     def test_preserves_clean_points(self, clean_lc):
-        from pyTransitPhotometry.detrending import sigma_clip
+        from pyTransit.detrending import sigma_clip
         times, fluxes, errors = clean_lc
         _, _, _, mask = sigma_clip(times, fluxes, errors, sigma_threshold=3.0)
         fraction_kept = mask.sum() / len(mask)
         assert fraction_kept > 0.9, f'Too many clean points rejected: {fraction_kept:.2%} kept'
 
     def test_output_shapes(self, clean_lc):
-        from pyTransitPhotometry.detrending import sigma_clip
+        from pyTransit.detrending import sigma_clip
         times, fluxes, errors = clean_lc
         t, f, e, mask = sigma_clip(times, fluxes, errors)
         assert len(t) == len(f) == len(e) == mask.sum()
@@ -44,7 +44,7 @@ class TestRollingMADFilter:
         return (times, fluxes, errors)
 
     def test_rejects_tracking_spikes(self, clean_lc):
-        from pyTransitPhotometry.detrending import rolling_mad_filter
+        from pyTransit.detrending import rolling_mad_filter
         times, fluxes, errors = clean_lc
         fluxes_spiked = fluxes.copy()
         spike_idx = [25, 100, 175]
@@ -54,7 +54,7 @@ class TestRollingMADFilter:
             assert not mask[idx], f'Tracking spike at index {idx} should be rejected by rolling MAD'
 
     def test_protects_transit_ingress(self, clean_lc):
-        from pyTransitPhotometry.detrending import rolling_mad_filter
+        from pyTransit.detrending import rolling_mad_filter
         times, fluxes, errors = clean_lc
         transit = 0.01 * np.exp(-(times - 1.0) ** 2 / (2 * 0.05 ** 2))
         fluxes_transit = fluxes - transit
@@ -65,7 +65,7 @@ class TestRollingMADFilter:
             assert fraction_kept > 0.7, f'Too many transit points rejected: {fraction_kept:.0%} kept'
 
     def test_output_consistency(self, clean_lc):
-        from pyTransitPhotometry.detrending import rolling_mad_filter
+        from pyTransit.detrending import rolling_mad_filter
         times, fluxes, errors = clean_lc
         t, f, e, mask = rolling_mad_filter(times, fluxes, errors)
         assert len(t) == len(f) == len(e) == mask.sum()
@@ -80,7 +80,7 @@ class TestIsolationForestFilter:
         return (times, fluxes, errors)
 
     def test_rejects_anomalies(self, clean_lc):
-        from pyTransitPhotometry.detrending import isolation_forest_filter
+        from pyTransit.detrending import isolation_forest_filter
         times, fluxes, errors = clean_lc
         fluxes_anomaly = fluxes.copy()
         fluxes_anomaly[[50, 150, 250]] = 1.8
@@ -89,7 +89,7 @@ class TestIsolationForestFilter:
         assert n_rejected >= 1, 'Isolation Forest should reject at least one anomaly'
 
     def test_output_consistency(self, clean_lc):
-        from pyTransitPhotometry.detrending import isolation_forest_filter
+        from pyTransit.detrending import isolation_forest_filter
         times, fluxes, errors = clean_lc
         t, f, e, mask = isolation_forest_filter(times, fluxes, errors)
         assert len(t) == len(f) == len(e) == mask.sum()
@@ -103,7 +103,7 @@ class TestIsolationForestFilter:
                 raise ImportError('sklearn blocked')
             return real_import(name, *args, **kwargs)
         monkeypatch.setattr(builtins, '__import__', _block_sklearn)
-        from pyTransitPhotometry.detrending import isolation_forest_filter
+        from pyTransit.detrending import isolation_forest_filter
         times, fluxes, errors = clean_lc
         with pytest.raises(ImportError, match='scikit-learn'):
             isolation_forest_filter(times, fluxes, errors)
@@ -119,7 +119,7 @@ class TestHuberAirmassDetrend:
         return (times, fluxes, errors, airmass)
 
     def test_reduces_airmass_correlation(self, airmass_lc):
-        from pyTransitPhotometry.detrending import huber_airmass_detrend
+        from pyTransit.detrending import huber_airmass_detrend
         times, fluxes, errors, airmass = airmass_lc
         f_detrended, slope, intercept = huber_airmass_detrend(times, fluxes, errors, airmass)
         corr_before = abs(np.corrcoef(airmass, fluxes)[0, 1])
@@ -127,13 +127,13 @@ class TestHuberAirmassDetrend:
         assert corr_after < corr_before, f'Huber detrending did not reduce airmass correlation: before={corr_before:.3f}, after={corr_after:.3f}'
 
     def test_slope_sign(self, airmass_lc):
-        from pyTransitPhotometry.detrending import huber_airmass_detrend
+        from pyTransit.detrending import huber_airmass_detrend
         times, fluxes, errors, airmass = airmass_lc
         _, slope, _ = huber_airmass_detrend(times, fluxes, errors, airmass)
         assert slope < 0, f'Expected negative extinction slope, got {slope:.6f}'
 
     def test_output_shape_preserved(self, airmass_lc):
-        from pyTransitPhotometry.detrending import huber_airmass_detrend
+        from pyTransit.detrending import huber_airmass_detrend
         times, fluxes, errors, airmass = airmass_lc
         f_detrended, _, _ = huber_airmass_detrend(times, fluxes, errors, airmass)
         assert f_detrended.shape == fluxes.shape

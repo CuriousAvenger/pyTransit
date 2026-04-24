@@ -1,6 +1,6 @@
 # Architecture & Design
 
-**pyTransitPhotometry System Architecture**
+**pyTransit System Architecture**
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### Architectural Style
 
-**pyTransitPhotometry** follows a **pipeline architecture** pattern, where data flows sequentially through stages:
+**pyTransit** follows a **pipeline architecture** pattern, where data flows sequentially through stages:
 
 ```
 Raw FITS → Calibration → Detection → Photometry → Light Curve → Detrending → Fitting → Results
@@ -117,7 +117,7 @@ class TransitPipeline:
 ### Directory Structure
 
 ```
-pyTransitPhotometry/
+pyTransit/
 ├── __init__.py          # Public API exports
 ├── pipeline.py          # Orchestrator (TransitPipeline class)
 ├── config.py            # Configuration management

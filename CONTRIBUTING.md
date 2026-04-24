@@ -1,6 +1,6 @@
-# Contributing to pyTransitPhotometry
+# Contributing to pyTransit
 
-Thank you for your interest in contributing to `pyTransitPhotometry`. This document describes how to report bugs, propose features, and submit code contributions.
+Thank you for your interest in contributing to `pyTransit`. This document describes how to report bugs, propose features, and submit code contributions.
 
 ---
 
@@ -48,8 +48,8 @@ Open a **Feature Request** issue with:
 
 ```bash
 # 1. Fork and clone
-git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
-cd pyTransitPhotometry
+git clone https://github.com/CuriousAvenger/pyTransit.git
+cd pyTransit
 
 # 2. Create an isolated environment
 conda create -n pytransit-dev python=3.11
@@ -77,8 +77,8 @@ The `[dev]` extras install `pytest`, `pytest-cov`, `black`, and `flake8`.
    ```
 5. Format your code:
    ```bash
-   black pyTransitPhotometry/ tests/
-   flake8 pyTransitPhotometry/ tests/ --max-line-length=100
+   black pyTransit/ tests/
+   flake8 pyTransit/ tests/ --max-line-length=100
    ```
 6. Push your branch and open a pull request against `main`. Fill in the PR template explaining what changed and why.
 7. Address reviewer comments in subsequent commits on the same branch; do not force-push after review has started.
@@ -106,7 +106,7 @@ pytest tests/ -v
 For coverage reporting:
 
 ```bash
-pytest tests/ --cov=pyTransitPhotometry --cov-report=term-missing
+pytest tests/ --cov=pyTransit --cov-report=term-missing
 ```
 
 New features **must** include unit tests. Bug fixes **must** include a regression test that would have caught the bug.
@@ -123,4 +123,4 @@ For significant changes, consider adding a worked example to `examples/tutorial.
 
 ## Getting Help
 
-Open a [GitHub Discussion](https://github.com/CuriousAvenger/pyTransitPhotometry/discussions) or file an issue tagged `[question]`.
+Open a [GitHub Discussion](https://github.com/CuriousAvenger/pyTransit/discussions) or file an issue tagged `[question]`.

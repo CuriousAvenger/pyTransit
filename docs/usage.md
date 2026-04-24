@@ -1,6 +1,6 @@
 # Usage Guide
 
-**Complete Guide to Installing, Configuring, and Running pyTransitPhotometry**
+**Complete Guide to Installing, Configuring, and Running pyTransit**
 
 ---
 
@@ -39,7 +39,7 @@ This installs the library and all required dependencies.
 
 ```bash
 # Clone repository
-git clone https://github.com/CuriousAvenger/pyTransitPhotometry.git
+git clone https://github.com/CuriousAvenger/pyTransit.git
 cd pytransitphotometry
 
 # Install in editable mode (for development)
